@@ -18,7 +18,7 @@ explicitly "it depends — here's exactly how it depends. Go run it yourself."
 ## Results
 
 Run it and open `docs/index.html` (charts) / `RESULTS.md` (tables). A published run
-lives on the `gh-pages` branch.
+is deployed to GitHub Pages (Settings → Pages → Source: GitHub Actions).
 
 These are **single-machine** results. Read them as **relative** (which server wins, and
 at what concurrency the winner flips), not as absolute numbers for your hardware.
@@ -82,7 +82,7 @@ behavior,"** not an isolated raw-query measurement. It's labeled as such on the 
 **In CI (the default):** trigger the **Benchmark** workflow
 (`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. It runs on
 `ubuntu-24.04`, builds the report, and uploads `results/` + `docs/` as an artifact
-(optionally publishing `docs/` to `gh-pages`). Inputs let you scale the matrix.
+(set the `publish` input to deploy `docs/` to GitHub Pages). Inputs let you scale the matrix.
 
 **Locally** — **Prerequisite:** Docker (Compose v2).
 
@@ -134,7 +134,7 @@ JSON line with full latency percentiles and per-class error counts.
 ## Roadmap
 
 - **Phase 2 — living benchmark:** the GitHub Actions workflow already runs the matrix on
-  `ubuntu-24.04` and can publish to `gh-pages`. Next: a `schedule:` trigger to auto-re-run
+  `ubuntu-24.04` and can deploy to GitHub Pages. Next: a `schedule:` trigger to auto-re-run
   on each PHP/Octane/server release. (Caveat: hosted runners are noisy; for isolated
   absolute numbers use a self-hosted 8-core+ runner — the harness will then pin `wrk` to
   `4-7` automatically.)

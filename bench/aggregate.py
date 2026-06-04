@@ -201,6 +201,10 @@ def main():
     data_js = json.dumps(summary)
     logo = logo_data_uri()
 
+    # Serve docs/ as pre-built static files: .nojekyll stops GitHub Pages from
+    # running Jekyll over it (the pages are generated, not a Jekyll site).
+    open(os.path.join(DOCS, ".nojekyll"), "w").close()
+
     # Comparison dashboard -> docs/index.html
     with open(os.path.join(here, "dashboard_template.html")) as fh:
         index_tpl = fh.read()

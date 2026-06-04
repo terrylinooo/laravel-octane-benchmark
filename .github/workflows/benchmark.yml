@@ -31,7 +31,7 @@ on:
         description: "Discarded warmup seconds per (server, workload)"
         default: "8"
       publish:
-        description: "Publish docs/ to the gh-pages branch"
+        description: "Deploy docs/ to GitHub Pages (Settings -> Pages -> Source: GitHub Actions)"
         type: boolean
         default: false
   # schedule:
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:
-      contents: write   # only used when publish=true (push to gh-pages)
+      contents: read
     steps:
       # `act` runs this workflow locally but ships without docker compose.
       - name: Install `docker-compose` for local simulations
@@ -116,9 +116,28 @@ jobs:
             RESULTS.md
             docs/
 
-      - name: Publish to gh-pages
+      # Official GitHub Pages deployment (Settings -> Pages -> Source: GitHub
+      # Actions). No Jekyll, no branch — docs/ is served as static files exactly
+      # as generated. The deploy itself happens in the `deploy` job below.
+      - name: Upload Pages artifact
         if: ${{ inputs.publish }}
-        uses: peaceiris/actions-gh-pages@v4
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
+          path: docs
+
+  # Separate job so the page deploy gets its own narrow pages:write permission
+  # and the github-pages environment. Only runs when publish=true.
+  deploy:
+    needs: benchmark
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
