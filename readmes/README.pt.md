@@ -8,146 +8,164 @@ Um harness reproduzível que faz benchmark dos servidores de aplicação Laravel
 (**Swoole**, **OpenSwoole**, **RoadRunner**, **FrankenPHP**) contra um grupo de controle
 tradicional **PHP-FPM + nginx** — e mostra *onde cada um vence*.
 
-A maioria dos benchmarks do Octane publica um único número "mais rápido" e se contradizem
-entre si, porque divergem silenciosamente em carga de trabalho, número de workers, gerador
-de carga e quente-versus-frio, e raramente revelam qualquer um desses detalhes. Este aqui
-fixa cada variável de confusão, revela todas elas, e publica **curvas de cruzamento de
-latência por carga de trabalho**. O veredito é explicitamente "depende — aqui está
-exatamente como depende. Vá executá-lo você mesmo."
-
-> A metodologia é o produto. Se você não consegue reproduzir um número a partir do seu
-> manifesto, é um bug.
+A maioria dos benchmarks de Octane publica um único número de "mais rápido" e se contradizem
+entre si, porque divergem silenciosamente em workload, contagem de workers, gerador de carga
+e warm-vs-cold, e raramente revelam algo disso. Este aqui corrige cada variável de confusão,
+revela todas elas e publica **curvas de cruzamento de latência por workload**. O veredito é
+explicitamente "depende — eis exatamente de que depende. Vá executá-lo você mesmo."
 
 ## Resultados
 
-Execute-o e abra `docs/index.html` (gráficos) / `RESULTS.md` (tabelas). Uma execução
-publicada vive na branch `gh-pages`.
+Execute-o e abra `docs/index.html` (gráficos) / `RESULTS.md` (tabelas). Uma execução publicada
+é implantada no GitHub Pages (Settings → Pages → Source: GitHub Actions). O site é um pequeno
+dashboard de várias páginas: uma página **Compare** (heatmap de vencedores, curvas de p99 +
+throughput por workload com tabelas de dados, pico de RSS) mais uma página de **deep-report por
+servidor** para cada servidor Octane (Swoole / OpenSwoole / RoadRunner / FrankenPHP), com um
+**toggle de worker-count** para alternar toda a visão entre as contagens de workers varridas.
 
-Estes são resultados de **máquina única**. Leia-os como **relativos** (qual servidor vence
-e em qual concorrência o vencedor muda), não como números absolutos para o seu hardware.
+Estes são resultados de **máquina única**. Leia-os como **relativos** (qual servidor vence, e
+em qual concorrência o vencedor inverte), não como números absolutos para o seu hardware.
 
 ## O que é medido
 
-**Destaque: latência p99 / p50 ao longo de uma varredura de concorrência.** A latência de
-cauda é onde estes servidores realmente divergem; o throughput médio costuma ficar dentro
-do ruído. O throughput (req/s) é reportado em conjunto. **Pico de RSS** (marca máxima de
-memória) é uma métrica secundária de "dimensionamento de VPS". O CPU% deliberadamente *não*
-é um destaque — a amostragem de CPU do cgroup é ruidosa demais para ser citada.
+**Destaque: latência p99 / p50 ao longo de uma varredura de concorrência.** A latência de cauda
+é onde esses servidores realmente divergem; o throughput médio frequentemente está dentro do
+ruído. O throughput (req/s) é reportado ao lado. O **pico de RSS** (marca d'água máxima de
+memória) é uma métrica secundária de "dimensionamento de VPS". O CPU% deliberadamente *não* é um
+destaque — a amostragem de CPU via cgroup é ruidosa demais para ser citada.
 
-Cada célula = `{server, workload, concurrency, run}` e é armazenada como um arquivo JSON em
-`results/` com um manifesto embutido (versões fixadas, limites, commit SHA, host, flags do
-wrk) para que qualquer ponto de dado seja reproduzível. Células que registraram erros do
-wrk (não-2xx / timeouts) são sinalizadas, nunca silenciosamente incluídas na média.
+Cada célula = `{server, workload, workers, concurrency, run}` e é armazenada como um arquivo JSON
+em `results/` com um manifesto embutido (versões fixadas, caps, commit SHA, host, flags do wrk)
+de modo que qualquer ponto de dados seja reproduzível. Células que registraram erros do wrk
+(non-2xx / timeouts) são sinalizadas, nunca incluídas silenciosamente na média.
 
 ## Controles de equidade (mantidos idênticos para cada servidor)
 
 | Controle | Valor | Por quê |
 |---|---|---|
-| Workers | **8** em todos os lugares (FPM `pm=static, max_children=8`) | mesmo orçamento; ~2 workers/CPU × 4 cores do Octane |
-| CPU | **`cpus=4`, `cpuset=0-3`** por contêiner da aplicação | cada servidor recebe os mesmos 4 cores físicos |
-| Gerador de carga | **`wrk` fixado via `${WRK_CPUSET}`** — `4-7` em um host com 8+ cores (isolado), `0-3` no runner padrão de 4 cores (co-residente) | isola o gerador quando há cores disponíveis para ele; revelado por célula como `generator_isolated` |
-| Memória | `mem_limit=512m` | mesmo teto |
-| OPcache | habilitado, `validate_timestamps=0` | código compilado uma vez, como o Octane mantém |
+| Workers | **varridos** (`WORKER_COUNTS`, padrão ~2/cpu e seu ×2 → `4 8` no runner de 2 cpus); `max_children` do FPM correspondente | uma dimensão da matriz — veja como cada servidor escala com os workers. Mesma contagem para cada servidor (incl. o controle FPM) por passada |
+| CPU | **a metade inferior do host** — `cpus=2`, `cpuset=0-1` no runner de 4 cores (`cpus=4`, `cpuset=0-3` num host de 8 cores) | todo servidor recebe os mesmos cores; a contagem de cpu do SUT é registrada nos caps do manifesto |
+| Gerador de carga | **`wrk` na metade superior do host** (`cpuset=2-3` no runner, `4-7` em 8 cores) — disjunto do SUT | o gerador está **sempre isolado**: ele nunca rouba a CPU do SUT. Registrado por célula como `generator_isolated` |
+| Memória | `mem_limit=4g` (env `MEM_LIMIT`) | teto **igual** e generoso — nunca limita no runner de 16 GB, então nenhum servidor é penalizado por OOM e o pico de RSS lê a verdadeira marca d'água máxima (não restringida). Defina `MEM_LIMIT=512m` para um cenário de VPS pequeno |
+| OPcache | habilitado, `validate_timestamps=0` | código compilado uma vez, como o Octane o mantém |
 | Ambiente da app | `APP_ENV=production`, `APP_DEBUG=false` | caminhos de código de produção |
-| Sessões | `SESSION_DRIVER=array` | endpoints stateless — nada serializa em um lock de escrita |
-| Versões | fixadas: PHP 8.4, Laravel 13, Octane 2.17 (veja o manifesto) | sem partes móveis |
+| Sessões | `SESSION_DRIVER=array` | endpoints sem estado — nada serializa em um lock de escrita |
+| Versões | fixadas: PHP 8.4, Laravel 13, Octane 2.17 (ver manifesto) | sem partes móveis |
 
-O harness executa **um servidor de aplicação por vez** (todos os outros parados) para que
-seu CPU/RAM sejam medidos em isolamento, não sob contenção de irmãos ociosos.
+O harness executa **um servidor de aplicação por vez** (todos os outros parados) de modo que sua
+CPU/RAM seja medida em isolamento, não sob contenção de irmãos ociosos.
 
 **Ambiente padrão: um runner `ubuntu-24.04` do GitHub Actions (4 vCPU / 16 GB RAM).**
-O `benchmark.sh` se adapta à contagem de cores: o SUT sempre recebe `cpuset 0-3`, e o
-gerador `wrk` é isolado nos cores `4-7` **somente quando o host tem ≥ 8 cores**. No runner
-de 4 cores não existem os cores `4-7`, então o gerador compartilha `0-3` com o SUT — cada
-célula registra `generator_isolated: false`. Como os runners de CI também são vizinhos
-barulhentos, leia essas execuções como **somente relativas**. Para números com gerador
-isolado, execute em uma máquina de 8+ cores (o harness escolhe `WRK_CPUSET=4-7`
-automaticamente, ou defina você mesmo).
+O `benchmark.sh` **divide o host ao meio**: o SUT recebe os cores inferiores, o gerador `wrk` os
+cores superiores, de modo que o gerador esteja **sempre isolado** (ele nunca rouba a CPU do SUT).
+No runner de 4 cores isso significa que o **SUT tem 2 cpus** (`cpuset 0-1`) e o `wrk` roda em
+`2-3`; num host de 8 cores o SUT recebe 4 cpus (`0-3`) e o `wrk` `4-7`. O trade-off é que o SUT só
+recebe **metade da máquina** — então no runner padrão os relatórios são para um **servidor de 2
+cpus**, registrado nos caps do manifesto (`cpus=2`). Como runners de CI compartilhados ainda são
+vizinhos ruidosos, leia os números como **apenas relativos**.
 
-## Cargas de trabalho
+## Workloads
 
-As cargas de trabalho são organizadas em três **grupos** para que os gráficos e tabelas
-sejam lidos como "overhead → para onde a CPU vai → I/O". As três rotas do grupo `cpu`
-estressam cada uma um caminho de instruções *diferente*, de modo que podem discordar sobre
-qual servidor vence.
+Os workloads são organizados em três **grupos** de modo que os gráficos e tabelas se leiam como
+"overhead → para onde vai a CPU → I/O". As três rotas do grupo `cpu` estressam cada uma um
+caminho de instrução *diferente*, então podem discordar sobre qual servidor vence.
 
 | Grupo | Rota | Isola | Notas |
 |---|---|---|---|
-| overhead | `/bench/hello` | roteamento + overhead de resposta | corpo de tamanho fixo |
-| cpu | `/bench/hash` | inteiro / bitwise | encadeamento de `sha256` ×`BENCH_HASH_ITERATIONS` (calibre para que seja ≫ hello) |
-| cpu | `/bench/mandelbrot` | float / FPU | Mandelbrot por tempo de escape, grade 78×78 ×`BENCH_MANDELBROT_REPEAT` |
-| cpu | `/bench/json` | serialização (codec) | round-trip de `json_encode`+`json_decode` de um array de 1000 inteiros ×`BENCH_JSON_ITERATIONS` (o codec domina, não o roteamento) |
-| io | `/bench/db` | uma query real | `SELECT` por PK indexada vs **MySQL 8** |
+| overhead | `/bench/hello` | roteamento + overhead de resposta | corpo de comprimento fixo |
+| cpu | `/bench/hash` | inteiro / bitwise | encadeamento `sha256` ×`BENCH_HASH_ITERATIONS` (calibre de modo que ≫ hello) |
+| cpu | `/bench/mandelbrot` | float / FPU | Mandelbrot por tempo de escape, grade `BENCH_MANDELBROT_DIM`²×4, limite `…_MAX_ITER`, ×`…_REPEAT` (~30ms padrão) |
+| cpu | `/bench/json` | serialização (codec) | round-trip de `json_encode`+`json_decode` de um array de 1000 inteiros ×`BENCH_JSON_ITERATIONS` (o codec domina, não o roteamento; ~20ms padrão) |
+| io | `/bench/db` | uma query real | `SELECT` de PK indexada vs **MySQL 8** |
 
-**Ressalva do `/bench/db`:** os servidores diferem no tratamento de conexões (pool de
-corrotinas do Swoole vs RoadRunner vs FrankenPHP). Esta carga de trabalho é delimitada como
-**"o comportamento de DB padrão do Octane de cada servidor",** não uma medição isolada de
-query bruta. Está rotulada como tal no gráfico.
+**Ressalva do `/bench/db`:** os servidores diferem no tratamento de conexões (pool de corrotinas
+do Swoole vs RoadRunner vs FrankenPHP). Este workload tem como escopo **"o comportamento de DB
+padrão do Octane de cada servidor",** não uma medição isolada de query bruta. Está rotulado como
+tal no gráfico.
 
 ## Execute-o
 
-**No CI (o padrão):** dispare o workflow **Benchmark**
-(`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. Ele executa em
-`ubuntu-24.04`, constrói o relatório, e faz upload de `results/` + `docs/` como um artefato
-(opcionalmente publicando `docs/` em `gh-pages`). As entradas permitem dimensionar a matriz.
+**Em CI (o padrão):** dispare o workflow **Benchmark**
+(`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. Ele roda em
+`ubuntu-24.04`, constrói o relatório e faz upload de `results/` + `docs/` como um artefato
+(defina a entrada `publish` para implantar `docs/` no GitHub Pages). As entradas permitem dimensionar a matriz.
 
-**Localmente** — **Pré-requisito:** Docker (Compose v2).
+**Localmente** — **Pré-requisitos:** Docker (Compose v2), e PHP 8.4 + Composer no host
+para `make deps` (apenas `composer install` roda no host; todo o resto está no Docker).
+Um `Makefile` envolve o workflow — `make help` lista cada target.
 
 ```bash
-# Full matrix (5 servers × 5 workloads × concurrency 8/32/128 × 3 runs ≈ 4-5 hours).
-# Resumable — a cell whose JSON exists is skipped, so a crash never restarts from zero.
-./benchmark.sh
+make setup     # one-time: .env + APP_KEY + composer install into vendor/
+make bench     # the full matrix  (= ./benchmark.sh; resumable — existing cells are skipped)
+make report    # build RESULTS.md + docs/ (Compare + per-server pages)  (= python3 bench/aggregate.py)
 
-# Build the tables + charts from results/.
-python3 bench/aggregate.py
-#   -> RESULTS.md, docs/summary.json, docs/index.html
-
-# Quick smoke run (a few minutes) to verify the pipeline end to end:
-SERVERS="swoole fpm" WORKLOADS="hello db" CONCURRENCIES=8 RUNS=1 DURATION=5 WARMUP=2 ./benchmark.sh
+make smoke     # quick end-to-end smoke run (a few minutes)
 ```
 
-Ajustável via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `RUNS`, `DURATION`, `WARMUP`,
-`BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`.
+Ajustável via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `WORKER_COUNTS`, `RUNS`, `DURATION`, `WARMUP`,
+`TIMEOUT`, `BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_DIM`, `BENCH_MANDELBROT_MAX_ITER`,
+`BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`. Cada (server, workload) é aquecido
+**em cada concorrência** antes de suas execuções, e o `wrk --timeout` (padrão 15s) permite que uma
+célula lenta e saturada seja medida em vez de censurada como erros.
 
 ## Como funciona
 
 ```
-benchmark.sh ── per (server, workload):
-  stop all app servers → start this one (+ mysql for db) → wait healthy
+benchmark.sh ── per worker count (split host: SUT = lower cores, wrk = upper cores):
+  set OCTANE_WORKERS + match the FPM pool, then per (server, workload):
+  stop all app servers → start this one (force-recreate; + mysql for db) → wait healthy
   → cpuset self-check (tags pinning=verified|unverified)
-  → warm (discarded) → sweep concurrency × runs via the pinned wrk container
-  → write results/{server}_{workload}_c{conc}_r{run}.json (+ embedded manifest)
-  → capture peak RSS (cgroup memory high-water mark) → stop → settle
-bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + docs/ (Chart.js)
+  → per concurrency: warm (discarded) → runs via the pinned wrk container (--timeout)
+  → write results/{server}_{workload}_w{workers}_c{conc}_r{run}.json (+ embedded manifest)
+  → capture peak RSS (cgroup v2 memory.peak / v1 high-water mark) → stop → settle
+bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + docs/ (Compare +
+  per-server pages, Chart.js, logo embedded)
 ```
 
-O contêiner `wrk` executa um pequeno reporter em Lua (`docker/wrk/report.lua`) que emite
-uma linha JSON com percentis de latência completos e contagens de erro por classe.
+O container `wrk` roda um pequeno reporter em Lua (`docker/wrk/report.lua`) que emite uma
+linha JSON com percentis completos de latência e contagens de erro por classe.
+
+## Profiler de memória ociosa
+
+Uma ferramenta separada mede **quanta RAM o Octane mantém residente por worker** — o custo de
+memória de manter o framework aquecido — sem carga:
+
+```bash
+./bench/mem-profile.sh        # boot each server at N workers (4/8/16/32), warm every
+                              # worker, read the container working set (cgroup rss+shmem,
+                              # so shared OPcache is counted once)
+python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
+```
+
+O ajuste separa o overhead **fixo** do framework/master/OPcache do custo **marginal** de mais um
+worker. A média ingênua `RSS / N` é enganosa — ela cai conforme N cresce apenas porque o custo
+fixo é amortizado, não porque um worker ficou mais barato.
 
 ## Ressalvas
 
-- **Máquina única, relativo não absoluto.** Seus números serão diferentes; o *formato*
-  (quem vence onde) é o achado portável.
-- **Auto-verificação de fixação.** Se o host não honrar `--cpuset-cpus`, cada célula é
-  marcada como `pinning=unverified` e o resultado não é apresentado como gerador isolado.
-- **Co-residência do gerador em 4 cores.** No runner padrão `ubuntu-24.04` o gerador de
-  carga compartilha os cores do SUT (`generator_isolated: false`). A comparação permanece
-  justa — cada servidor é medido sob o *mesmo* gerador co-residente — mas a latência
-  absoluta é inflada em relação a uma execução isolada de 8 cores. De qualquer forma, é uma
-  medição relativa.
-- **Calibração do grupo `cpu`.** `BENCH_HASH_ITERATIONS` (padrão 2000),
-  `BENCH_MANDELBROT_REPEAT` (1), e `BENCH_JSON_ITERATIONS` (1000) devem ser ajustados na sua
-  máquina para que a latência de cada rota do grupo `cpu` domine claramente `/bench/hello`.
+- **Máquina única, relativo e não absoluto.** Seus números vão diferir; o *formato* (quem vence
+  onde) é o achado portável.
+- **Self-check de pinning.** Se o host não honrar `--cpuset-cpus`, cada célula é marcada com
+  `pinning=unverified` e o resultado não é apresentado como isolado por gerador.
+- **SUT de 2 cpus no runner de 4 cores.** Para manter o gerador isolado, o host é dividido ao
+  meio — então no runner padrão cada servidor é um servidor de **2 cpus** (os outros 2 cores
+  acionam o `wrk`). Está rotulado no manifesto (`cpus=2`). Para um SUT de 4 cpus *com* um gerador
+  isolado você precisa de um host de 8 cores (a divisão então dá ao SUT 4 cores e ao `wrk` os outros 4).
+- **Calibração do grupo `cpu`.** Os padrões miram em **~20-30ms por requisição**: pesado o
+  suficiente para dominar `/bench/hello`, leve o suficiente para que uma varredura até a
+  concorrência 128 não sature em timeouts do `wrk` numa máquina de 4 cores. Ajuste na sua máquina
+  via `BENCH_HASH_ITERATIONS` (2000), `BENCH_MANDELBROT_DIM` (32) /
+  `BENCH_MANDELBROT_MAX_ITER` (256), e `BENCH_JSON_ITERATIONS` (150); `…_REPEAT` escala o
+  mandelbrot para cima para hosts mais pesados.
 
 ## Roadmap
 
-- **Fase 2 — benchmark vivo:** o workflow do GitHub Actions já executa a matriz em
-  `ubuntu-24.04` e pode publicar em `gh-pages`. A seguir: um gatilho `schedule:` para
-  re-executar automaticamente a cada lançamento de PHP/Octane/servidor. (Ressalva: runners
-  hospedados são barulhentos; para números absolutos isolados use um runner self-hosted de
-  8+ cores — o harness então fixará `wrk` em `4-7` automaticamente.)
-- **Fase 3 — motor de decisão:** "diga-me o formato da minha app → qual servidor + número
-  de workers."
+- **Fase 2 — benchmark vivo:** o workflow do GitHub Actions já roda a matriz em
+  `ubuntu-24.04` e pode implantar no GitHub Pages. A seguir: um gatilho `schedule:` para
+  re-executar automaticamente a cada release de PHP/Octane/servidor. (Ressalva: runners hospedados
+  são ruidosos; para um SUT de **4 cpus** com o gerador ainda isolado, use um runner self-hosted
+  de 8 cores+ — a divisão então dá ao SUT `0-3` e ao `wrk` `4-7` automaticamente.)
+- **Fase 3 — motor de decisão:** "me diga o formato da minha app → qual servidor + contagem de workers."
 
 ## Estrutura
 
@@ -156,8 +174,12 @@ routes/web.php              # /bench/{hello,hash,mandelbrot,json,db} workloads
 compose.yml                 # 5 servers + mysql + pinned wrk (caps & cpuset here)
 docker/wrk/                 # wrk image + Lua JSON reporter
 docker/fpm/ , docker/nginx/ # FPM pool + opcache parity, nginx FastCGI front
-benchmark.sh               # the matrix harness
-bench/aggregate.py         # results → RESULTS.md + docs/ charts
+Makefile                    # container-first workflow (make help)
+benchmark.sh                # the matrix harness
+bench/aggregate.py          # results → RESULTS.md + docs/ (Compare + per-server pages)
+bench/dashboard_template.html , bench/server_template.html  # docs/ page templates
+bench/mem-profile.sh , bench/mem_profile.py  # idle per-worker memory profiler
 database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
+readmes/                    # README translations (10 languages)
 ```

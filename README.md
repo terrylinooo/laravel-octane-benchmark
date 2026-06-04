@@ -12,9 +12,6 @@ and rarely disclose any of it. This one fixes every confounding variable, disclo
 of them, and publishes **per-workload latency crossover curves**. The verdict is
 explicitly "it depends — here's exactly how it depends. Go run it yourself."
 
-> The methodology is the product. If you can't reproduce a number from its manifest,
-> it's a bug.
-
 ## Results
 
 Run it and open `docs/index.html` (charts) / `RESULTS.md` (tables). A published run
