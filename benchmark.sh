@@ -4,12 +4,12 @@
 #
 # Runs ONE app server at a time (others stopped), sweeps concurrency, and writes
 # one JSON result per cell with an embedded manifest. The whole point is fairness:
-#   * each server gets exactly 4 pinned cores (cpuset 0-3); 8 workers everywhere
-#     (Octane's ~2 workers/CPU guidance × 4 cores), opcache + production parity
-#   * the wrk generator is isolated on cores 4-7 ON AN 8-CORE+ HOST. The default
-#     measurement target is a GitHub Actions ubuntu-24.04 runner = 4 vCPU only, so
-#     cores 4-7 don't exist and wrk shares 0-3 with the SUT (co-resident). The
-#     harness auto-detects this (nproc) and records generator_isolated per cell.
+#   * the host is split in half: the SUT gets the LOWER half of the cores, the wrk
+#     generator the UPPER half, so the generator is always isolated (never steals the
+#     SUT's CPU). On the default 4-core GitHub Actions runner that's SUT=2 cpus
+#     (cpuset 0-1) + wrk=cpuset 2-3; on an 8-core host it's SUT 0-3 + wrk 4-7. The SUT
+#     cpu count is recorded in the manifest caps so reports are labelled honestly.
+#   * 8 workers everywhere, opcache + production parity
 #   * latency percentiles (p50/p99) from wrk are the headline metric
 #   * peak RSS (cgroup high-water mark, v2 memory.peak or v1 max_usage_in_bytes) per cell
 #   * cells with wrk errors are recorded so bad cells can't masquerade as clean
@@ -33,22 +33,25 @@ RUNS="${RUNS:-3}"
 DURATION="${DURATION:-30}"     # measured seconds per run
 WARMUP="${WARMUP:-10}"         # discarded warmup seconds per (server,workload)
 THREADS="${THREADS:-4}"
+TIMEOUT="${TIMEOUT:-15s}"      # wrk per-request timeout — slow cells get measured, not censored
 SETTLE="${SETTLE:-3}"          # teardown settle delay between (server,workload)
 RESULTS_DIR="${RESULTS_DIR:-results}"
 APP_SERVICES="swoole openswoole roadrunner frankenphp fpm nginx"
 
-# ---- load-generator core placement (the only thing that adapts to host size) ---
-# SUT is always cpuset 0-3. If the host has >= 8 cores we isolate wrk on 4-7 (the
-# generator never steals the SUT's CPU). On a 4-core box (the default CI runner)
-# cores 4-7 don't exist, so wrk shares 0-3 with the SUT. compose reads WRK_CPUSET.
+# ---- core placement: split the host in half (2+2 on the 4-core CI runner) --------
+# The SUT gets the LOWER half of the cores, the wrk generator the UPPER half, so the
+# generator is ALWAYS isolated (disjoint core sets) — it never steals the SUT's CPU.
+# On the default 4-core runner that's SUT=cpuset 0-1 (2 cpus) + wrk=cpuset 2-3; on an
+# 8-core host it's SUT 0-3 + wrk 4-7. The trade-off is the SUT only gets half the box
+# (2 cpus on CI) — the manifest caps record that so reports are labelled honestly.
 NPROC="$(nproc)"
-if [ -z "${WRK_CPUSET:-}" ]; then
-  if [ "$NPROC" -ge 8 ]; then WRK_CPUSET="4-7"; else WRK_CPUSET="0-3"; fi
-fi
-export WRK_CPUSET
-# Isolated only when the generator's first core is disjoint from the SUT's 0-3.
-first_core="${WRK_CPUSET%%[-,]*}"
-if [ "${first_core:-0}" -ge 4 ] 2>/dev/null; then GEN_ISOLATED=true; else GEN_ISOLATED=false; fi
+HALF=$(( NPROC / 2 )); [ "$HALF" -lt 1 ] && HALF=1
+SUT_CPUS="${SUT_CPUS:-$HALF}"
+SUT_CPUSET="${SUT_CPUSET:-0-$((HALF - 1))}"
+WRK_CPUSET="${WRK_CPUSET:-$HALF-$((NPROC - 1))}"
+export SUT_CPUS SUT_CPUSET WRK_CPUSET
+# Isolated whenever the two core sets differ (always, by construction of the split).
+GEN_ISOLATED=true; [ "$SUT_CPUSET" = "$WRK_CPUSET" ] && GEN_ISOLATED=false
 
 dc() { docker compose "$@"; }
 
@@ -125,8 +128,8 @@ build_manifest() {
     --arg commit "$commit" --arg host "$host" --arg nproc "$NPROC" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson workers 8 \
-    --arg caps "cpus=4,cpuset=0-3,mem=${MEM_LIMIT:-8g}" \
-    --arg wrk "wrk -t${THREADS} -d${DURATION}s --latency" \
+    --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-8g}" \
+    --arg wrk "wrk -t${THREADS} -d${DURATION}s --timeout ${TIMEOUT} --latency" \
     --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
     '{php:$php, laravel:$laravel, octane:$octane, workers:$workers, caps:$caps,
       commit:$commit, host:$host, nproc:($nproc|tonumber), wrk_cmd:$wrk,
@@ -140,7 +143,7 @@ run_cell() {
   f="$RESULTS_DIR/${server}_${workload}_c${conc}_r${run}.json"
   [ -f "$f" ] && { echo "      c${conc} r${run}: cached"; return 0; }
   route=$(route_for "$workload")
-  out=$(dc run --rm wrk -t"$THREADS" -c"$conc" -d"${DURATION}s" --latency -s /report.lua \
+  out=$(dc run --rm wrk -t"$THREADS" -c"$conc" -d"${DURATION}s" --timeout "$TIMEOUT" --latency -s /report.lua \
         "http://${target}:8000${route}" 2>/dev/null)
   wrkjson=$(grep '^__WRKJSON__' <<<"$out" | sed 's/^__WRKJSON__//' | head -1)
   if [ -z "$wrkjson" ]; then
@@ -162,8 +165,8 @@ run_cell() {
 echo "Servers:       $SERVERS"
 echo "Workloads:     $WORKLOADS"
 echo "Concurrencies: $CONCURRENCIES   Runs/cell: $RUNS   Duration: ${DURATION}s   Warmup: ${WARMUP}s"
-echo "Cores:         nproc=$NPROC   SUT=cpuset 0-3   wrk=cpuset $WRK_CPUSET   generator_isolated=$GEN_ISOLATED"
-[ "$GEN_ISOLATED" = false ] && echo "  ! 4-core host: load generator shares the SUT's cores (co-resident) — results are relative-only."
+echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   generator_isolated=$GEN_ISOLATED"
+[ "$GEN_ISOLATED" = false ] && echo "  ! host too small to split — generator shares the SUT's cores (co-resident), relative-only."
 echo
 
 echo "==> Preparing backend (mysql) ..."
@@ -194,12 +197,14 @@ for server in $SERVERS; do
     fi
     # pinning self-check on the measured container
     cpuset=$(read_cpuset "$measure")
-    pinning="unverified"; [ "$cpuset" = "0-3" ] && pinning="verified"
-    [ "$pinning" = "unverified" ] && echo "     ! cpuset='$cpuset' (expected 0-3) — results tagged pinning=unverified"
-    # warm (discarded)
-    dc run --rm wrk -t"$THREADS" -c32 -d"${WARMUP}s" "http://${target}:8000$(route_for "$workload")" >/dev/null 2>&1
-    # measured sweep
+    pinning="unverified"; [ "$cpuset" = "$SUT_CPUSET" ] && pinning="verified"
+    [ "$pinning" = "unverified" ] && echo "     ! cpuset='$cpuset' (expected $SUT_CPUSET) — results tagged pinning=unverified"
+    # measured sweep — warm AT each concurrency (discarded) before its runs, so a
+    # level isn't penalized by the previous level's state or residual cold-start
+    # (fixes the order artifact where the first-measured concurrency reads high).
     for conc in $CONCURRENCIES; do
+      dc run --rm wrk -t"$THREADS" -c"$conc" -d"${WARMUP}s" --timeout "$TIMEOUT" \
+        "http://${target}:8000$(route_for "$workload")" >/dev/null 2>&1
       for run in $(seq 1 "$RUNS"); do
         run_cell "$server" "$workload" "$conc" "$run" "$target" "$pinning"
       done

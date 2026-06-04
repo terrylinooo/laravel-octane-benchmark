@@ -15,23 +15,24 @@ name: laravel-octane-benchmark
 # 18000+ range avoids colliding with other local dev containers.
 #
 # Fairness knobs (held identical across every server):
-#   * 8 workers each (FPM pm=static max_children=8) -> Octane's ~2 workers/CPU × 4
-#   * cpus=4 + cpuset=0-3  -> the "system under test" gets exactly 4 physical cores
+#   * 8 workers each (FPM pm=static max_children=8)
+#   * SUT_CPUS + SUT_CPUSET -> the "system under test" gets the host's LOWER half of
+#     cores. benchmark.sh splits the host: SUT=2 cpus / cpuset 0-1 on the 4-core CI
+#     runner, SUT=4 / cpuset 0-3 on an 8-core host. Defaults here = the CI case.
 #   * mem_limit=8g (env MEM_LIMIT) -> generous EQUAL ceiling. The 16 GB runner has
 #     headroom (one server at a time), so this never binds in practice: no server is
 #     OOM-penalized and peak RSS reads the true high-water mark instead of being
 #     clamped at the limit. Set MEM_LIMIT=512m for a deliberate small-VPS scenario.
-#   * wrk pinned via ${WRK_CPUSET} so the load generator never steals the SUT's CPU.
-#     benchmark.sh sets it from nproc: cores 4-7 on an 8-core+ host (isolated), or
-#     0-3 on the default 4-core GitHub Actions runner (shared/co-resident — there
-#     are no cores 4-7 to isolate onto). Defaults to 0-3 if invoked without it.
+#   * wrk pinned via ${WRK_CPUSET} = the host's UPPER half (2-3 on CI, 4-7 on 8-core),
+#     disjoint from the SUT, so the load generator is ALWAYS isolated (never steals
+#     the SUT's CPU). Defaults to 2-3 if invoked without benchmark.sh.
 #   * opcache parity, APP_ENV=production, SESSION_DRIVER=array (stateless endpoints)
 
 x-octane: &octane
   working_dir: /var/www/html
   restart: unless-stopped
-  cpus: 4
-  cpuset: "0-3"
+  cpus: "${SUT_CPUS:-2}"
+  cpuset: "${SUT_CPUSET:-0-1}"
   mem_limit: "${MEM_LIMIT:-8g}"
   volumes:
     - ./:/var/www/html
@@ -49,11 +50,13 @@ x-octane: &octane
     DB_DATABASE: bench
     DB_USERNAME: bench
     DB_PASSWORD: bench
-    # Calibration knobs for the cpu-group workloads: /bench/hash (sha256 rounds),
-    # /bench/mandelbrot (grid repeats), /bench/json (encode+decode round-trips).
+    # Calibration knobs for the cpu-group workloads. Defaults target ~20-30ms/request
+    # so a concurrency sweep to 128 doesn't saturate into timeouts on a 4-core box.
     BENCH_HASH_ITERATIONS: "${BENCH_HASH_ITERATIONS:-2000}"
+    BENCH_MANDELBROT_DIM: "${BENCH_MANDELBROT_DIM:-32}"
+    BENCH_MANDELBROT_MAX_ITER: "${BENCH_MANDELBROT_MAX_ITER:-256}"
     BENCH_MANDELBROT_REPEAT: "${BENCH_MANDELBROT_REPEAT:-1}"
-    BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-1000}"
+    BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-150}"
   healthcheck:
     test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/bench/hello')!==false?0:1);"]
     interval: 5s
@@ -110,8 +113,8 @@ services:
     image: ghcr.io/airygen/php:8.4-fpm-1.0.0
     working_dir: /var/www/html
     restart: unless-stopped
-    cpus: 4
-    cpuset: "0-3"
+    cpus: "${SUT_CPUS:-2}"
+    cpuset: "${SUT_CPUSET:-0-1}"
     mem_limit: "${MEM_LIMIT:-8g}"
     volumes:
       - ./:/var/www/html
@@ -130,8 +133,10 @@ services:
       DB_USERNAME: bench
       DB_PASSWORD: bench
       BENCH_HASH_ITERATIONS: "${BENCH_HASH_ITERATIONS:-2000}"
+      BENCH_MANDELBROT_DIM: "${BENCH_MANDELBROT_DIM:-32}"
+      BENCH_MANDELBROT_MAX_ITER: "${BENCH_MANDELBROT_MAX_ITER:-256}"
       BENCH_MANDELBROT_REPEAT: "${BENCH_MANDELBROT_REPEAT:-1}"
-      BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-1000}"
+      BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-150}"
     healthcheck:
       test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"]
       interval: 5s
@@ -142,7 +147,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
-    cpuset: "0-3"
+    cpuset: "${SUT_CPUSET:-0-1}"
     mem_limit: 128m
     depends_on:
       fpm:
@@ -165,7 +170,7 @@ services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
-    cpuset: "0-3"
+    cpuset: "${SUT_CPUSET:-0-1}"
     mem_limit: 512m
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -181,7 +186,7 @@ services:
       retries: 20
       start_period: 20s
 
-  # --- Load generator (pinned to the OTHER 4 cores) ---------------------------
+  # --- Load generator (pinned to the host's UPPER half of cores) --------------
   # Profiled so it never starts on `docker compose up`. The harness invokes it
   # with `docker compose run --rm wrk ...`. The Lua reporter emits one JSON line
   # prefixed with __WRKJSON__ so the harness can parse percentiles + errors.
@@ -189,9 +194,9 @@ services:
     build:
       context: ./docker/wrk
     image: octane-bench/wrk:latest
-    # Set by benchmark.sh from nproc: 4-7 (isolated, 8-core host) or 0-3 (shared,
-    # 4-core CI runner). Defaults to 0-3 so a bare `docker compose run wrk` is valid.
-    cpuset: "${WRK_CPUSET:-0-3}"
+    # Set by benchmark.sh = the host's upper half: 2-3 on the 4-core CI runner
+    # (SUT has 0-1), 4-7 on an 8-core host. Default 2-3 so a bare run is valid.
+    cpuset: "${WRK_CPUSET:-2-3}"
     mem_limit: 256m
     profiles: ["tools"]
     # Joins the default project network; targets app servers by service name

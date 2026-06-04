@@ -39,9 +39,9 @@ are flagged, never silently averaged in.
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **8** everywhere (FPM `pm=static, max_children=8`) | same budget; Octane's ~2 workers/CPU × 4 cores |
-| CPU | **`cpus=4`, `cpuset=0-3`** per app container | each server gets the same 4 physical cores |
-| Load generator | **`wrk` pinned via `${WRK_CPUSET}`** — `4-7` on an 8-core+ host (isolated), `0-3` on the 4-core default runner (co-resident) | isolates the generator when cores exist for it; disclosed per-cell as `generator_isolated` |
+| Workers | **8** everywhere (FPM `pm=static, max_children=8`) | same concurrency budget for every server |
+| CPU | **the host's lower half** — `cpus=2`, `cpuset=0-1` on the 4-core runner (`cpus=4`, `cpuset=0-3` on an 8-core host) | every server gets the same cores; the SUT cpu count is recorded in the manifest caps |
+| Load generator | **`wrk` on the host's upper half** (`cpuset=2-3` on the runner, `4-7` on 8 cores) — disjoint from the SUT | the generator is **always isolated**: it never steals the SUT's CPU. Recorded per-cell as `generator_isolated` |
 | Memory | `mem_limit=8g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
 | OPcache | enabled, `validate_timestamps=0` | code compiled once, like Octane keeps it |
 | App env | `APP_ENV=production`, `APP_DEBUG=false` | production code paths |
@@ -52,12 +52,13 @@ The harness runs **one app server at a time** (all others stopped) so its CPU/RA
 measured in isolation, not under contention from idle siblings.
 
 **Default environment: a GitHub Actions `ubuntu-24.04` runner (4 vCPU / 16 GB RAM).**
-`benchmark.sh` adapts to the core count: the SUT always gets `cpuset 0-3`, and the `wrk`
-generator is isolated on cores `4-7` **only when the host has ≥ 8 cores**. On the 4-core
-runner there are no cores `4-7`, so the generator shares `0-3` with the SUT — each cell
-records `generator_isolated: false`. Because CI runners are also noisy neighbors, read
-those runs as **relative-only**. For generator-isolated numbers, run on an 8-core+ box
-(the harness picks `WRK_CPUSET=4-7` automatically, or set it yourself).
+`benchmark.sh` **splits the host in half**: the SUT gets the lower cores, the `wrk`
+generator the upper cores, so the generator is **always isolated** (it never steals the
+SUT's CPU). On the 4-core runner that means the **SUT is 2 cpus** (`cpuset 0-1`) and `wrk`
+runs on `2-3`; on an 8-core host the SUT gets 4 cpus (`0-3`) and `wrk` `4-7`. The trade-off
+is the SUT only gets **half the box** — so on the default runner reports are for a **2-cpu
+server**, recorded in the manifest caps (`cpus=2`). Because shared CI runners are still
+noisy neighbors, read the numbers as **relative-only**.
 
 ## Workloads
 
@@ -69,8 +70,8 @@ Workloads are organized into three **groups** so the charts and tables read as
 |---|---|---|---|
 | overhead | `/bench/hello` | routing + response overhead | fixed-length body |
 | cpu | `/bench/hash` | integer / bitwise | `sha256` chaining ×`BENCH_HASH_ITERATIONS` (calibrate so it ≫ hello) |
-| cpu | `/bench/mandelbrot` | float / FPU | escape-time Mandelbrot, 78×78 grid ×`BENCH_MANDELBROT_REPEAT` |
-| cpu | `/bench/json` | serialization (codec) | `json_encode`+`json_decode` round-trip of a 1000-int array ×`BENCH_JSON_ITERATIONS` (codec dominates, not routing) |
+| cpu | `/bench/mandelbrot` | float / FPU | escape-time Mandelbrot, `BENCH_MANDELBROT_DIM`²×4 grid, `…_MAX_ITER` cap, ×`…_REPEAT` (~30ms default) |
+| cpu | `/bench/json` | serialization (codec) | `json_encode`+`json_decode` round-trip of a 1000-int array ×`BENCH_JSON_ITERATIONS` (codec dominates, not routing; ~20ms default) |
 | io | `/bench/db` | a real query | indexed PK `SELECT` vs **MySQL 8** |
 
 **`/bench/db` caveat:** servers differ in connection handling (Swoole coroutine pool vs
@@ -100,7 +101,10 @@ SERVERS="swoole fpm" WORKLOADS="hello db" CONCURRENCIES=8 RUNS=1 DURATION=5 WARM
 ```
 
 Tunable via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `RUNS`, `DURATION`, `WARMUP`,
-`BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`.
+`TIMEOUT`, `BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_DIM`, `BENCH_MANDELBROT_MAX_ITER`,
+`BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`. Each (server, workload) is warmed
+**at every concurrency** before its runs, and `wrk --timeout` (default 15s) lets a slow,
+saturated cell be measured rather than censored as errors.
 
 ## How it works
 
@@ -123,21 +127,23 @@ JSON line with full latency percentiles and per-class error counts.
   wins where) is the portable finding.
 - **Pinning self-check.** If the host doesn't honor `--cpuset-cpus`, every cell is tagged
   `pinning=unverified` and the result is not presented as generator-isolated.
-- **Generator co-residence on 4 cores.** On the default `ubuntu-24.04` runner the load
-  generator shares the SUT's cores (`generator_isolated: false`). The comparison stays
-  fair — every server is measured under the *same* co-resident generator — but absolute
-  latency is inflated versus an 8-core isolated run. It's a relative measurement either way.
-- **`cpu`-group calibration.** `BENCH_HASH_ITERATIONS` (default 2000),
-  `BENCH_MANDELBROT_REPEAT` (1), and `BENCH_JSON_ITERATIONS` (1000) should be tuned on
-  your box so each `cpu`-group route's latency clearly dominates `/bench/hello`.
+- **2-cpu SUT on the 4-core runner.** To keep the generator isolated, the host is split
+  in half — so on the default runner each server is a **2-cpu** server (the other 2 cores
+  drive `wrk`). It's labelled in the manifest (`cpus=2`). For a 4-cpu SUT *with* an isolated
+  generator you need an 8-core host (the split then gives the SUT 4 cores, `wrk` the other 4).
+- **`cpu`-group calibration.** Defaults aim for **~20-30ms per request**: heavy enough to
+  dominate `/bench/hello`, light enough that a sweep to concurrency 128 doesn't saturate
+  into `wrk` timeouts on a 4-core box. Tune on your box via `BENCH_HASH_ITERATIONS` (2000),
+  `BENCH_MANDELBROT_DIM` (32) / `BENCH_MANDELBROT_MAX_ITER` (256), and
+  `BENCH_JSON_ITERATIONS` (150); `…_REPEAT` scales mandelbrot up for heavier hosts.
 
 ## Roadmap
 
 - **Phase 2 — living benchmark:** the GitHub Actions workflow already runs the matrix on
   `ubuntu-24.04` and can deploy to GitHub Pages. Next: a `schedule:` trigger to auto-re-run
-  on each PHP/Octane/server release. (Caveat: hosted runners are noisy; for isolated
-  absolute numbers use a self-hosted 8-core+ runner — the harness will then pin `wrk` to
-  `4-7` automatically.)
+  on each PHP/Octane/server release. (Caveat: hosted runners are noisy; for a **4-cpu**
+  SUT with the generator still isolated, use a self-hosted 8-core+ runner — the split then
+  gives the SUT `0-3` and `wrk` `4-7` automatically.)
 - **Phase 3 — decision engine:** "tell me my app's shape → which server + worker count."
 
 ## Layout

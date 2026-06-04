@@ -39,10 +39,10 @@ Route::get('/bench/hello', fn () => response('OK'));
 // serialization. Pure integers, so this measures raw codec throughput (no string
 // escaping / unicode cost). Deterministic: the checksum (total encoded bytes) is
 // identical on every server, so a miscompute or a silently-empty loop is visible.
-// Default ~1000 iters ≈ a few hundred ms on the bench host (same weight band as
-// /bench/hash and /bench/mandelbrot).
+// Default ~150 iters ≈ ~20ms — heavy enough to dominate routing, light enough that
+// a concurrency sweep to 128 doesn't saturate into timeouts on a 4-core box.
 Route::get('/bench/json', function () {
-    $iterations = (int) env('BENCH_JSON_ITERATIONS', 1000);
+    $iterations = (int) env('BENCH_JSON_ITERATIONS', 150);
     $data = ['users' => range(1, 1000)];
     $checksum = 0;
 
@@ -69,27 +69,30 @@ Route::get('/bench/hash', function () {
     return response()->json(['iterations' => $iterations, 'digest' => substr($hash, 0, 16)]);
 });
 
-// mandelbrot — float/FPU-bound CPU work (cpu group). Escape-time Mandelbrot over
-// a 78x78 grid (cells -39..38), up to 1000 iterations/cell. Complements /bench/hash,
-// which is integer/bitwise (sha256): this stresses the floating-point path
-// instead, so the two can disagree on which server wins. Deterministic — the
-// returned checksum (sum of per-cell iteration counts) is identical on every
-// server, so a miscompute is visible. BENCH_MANDELBROT_REPEAT recomputes the
-// whole grid N times to calibrate load so latency clearly dominates /bench/hello.
+// mandelbrot — float/FPU-bound CPU work (cpu group). Escape-time Mandelbrot over a
+// (2*DIM)x(2*DIM) grid, up to MAX_ITER iterations/cell. Complements /bench/hash,
+// which is integer/bitwise (sha256): this stresses the floating-point path instead,
+// so the two can disagree on which server wins. Deterministic — the checksum (sum of
+// per-cell iteration counts) is identical on every server, so a miscompute is visible.
+// Calibration: DIM (grid) and MAX_ITER (escape cap) size one pass; REPEAT scales up.
+// Defaults DIM=32, MAX_ITER=256 ≈ ~30ms — heavy enough to dominate routing, light
+// enough that a sweep to 128 doesn't saturate into timeouts on a 4-core box.
 Route::get('/bench/mandelbrot', function () {
     $repeat = (int) env('BENCH_MANDELBROT_REPEAT', 1);
+    $dim = (int) env('BENCH_MANDELBROT_DIM', 32);
+    $maxIter = (int) env('BENCH_MANDELBROT_MAX_ITER', 256);
     $checksum = 0;
 
     for ($r = 0; $r < $repeat; $r++) {
-        for ($y = -39; $y < 39; $y++) {
-            for ($x = -39; $x < 39; $x++) {
+        for ($y = -$dim; $y < $dim; $y++) {
+            for ($x = -$dim; $x < $dim; $x++) {
                 $zr = 0.0;
                 $zi = 0.0;
-                $cr = $x / 40.0;
-                $ci = $y / 40.0;
+                $cr = $x / $dim;   // grid scaled by DIM so the fractal region is stable
+                $ci = $y / $dim;
                 $i = 0;
 
-                while ($zr * $zr + $zi * $zi < 4 && $i < 1000) {
+                while ($zr * $zr + $zi * $zi < 4 && $i < $maxIter) {
                     $tmp = $zr * $zr - $zi * $zi + $cr;
                     $zi = 2 * $zr * $zi + $ci;
                     $zr = $tmp;
@@ -101,7 +104,9 @@ Route::get('/bench/mandelbrot', function () {
         }
     }
 
-    return response()->json(['repeat' => $repeat, 'checksum' => $checksum]);
+    return response()->json([
+        'repeat' => $repeat, 'dim' => $dim, 'max_iter' => $maxIter, 'checksum' => $checksum,
+    ]);
 });
 
 // db — one indexed primary-key SELECT against MySQL 8 (realistic "app does a
