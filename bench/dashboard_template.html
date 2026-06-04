@@ -201,42 +201,6 @@
   }
   .swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
 
-  /* Small-multiples overview (grafted from D) */
-  .sm-card { padding: 20px 22px 18px; }
-  .sm-block { margin-top: 8px; }
-  .sm-block + .sm-block { margin-top: 26px; }
-  .sm-block-label {
-    font-size: 12px; font-weight: 600; color: var(--text-2);
-    margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
-  }
-  .sm-block-label .hint { font-size: 11px; font-weight: 500; color: var(--text-3); }
-  .sm-grid {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 0;
-  }
-  .sm-cell {
-    padding: 0 13px; border-left: 1px solid var(--border);
-  }
-  .sm-cell:first-child { border-left: none; padding-left: 0; }
-  .sm-cell.grp-start { border-left: 1px solid var(--border-strong); }
-  .sm-cell h4 {
-    font-size: 13px; font-weight: 640; margin: 0 0 1px; color: var(--text);
-    letter-spacing: -.01em;
-  }
-  .sm-cell .grp-tag {
-    font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
-    color: var(--accent); font-weight: 650; display: block;
-    margin-bottom: 6px; height: 11px;
-  }
-  .sm-canvas-box { position: relative; height: 116px; }
-  .sm-axis-note {
-    font-size: 9.5px; color: var(--text-3); margin-top: 5px; font-weight: 500;
-  }
-  .sm-cross {
-    font-size: 9.5px; line-height: 1.35; color: var(--text-3);
-    margin-top: 3px; min-height: 13px;
-  }
-  .sm-cross b { color: var(--cross); font-weight: 650; }
-
   /* Workload cards */
   .group-cards { display: flex; flex-direction: column; gap: 18px; }
   .wl-card { }
@@ -285,17 +249,11 @@
     border-top: 1px dashed var(--border); padding-top: 14px;
   }
 
-  @media (max-width: 1080px) {
-    .sm-grid { grid-template-columns: repeat(5, 1fr); }
-    .sm-cell { padding: 0 8px; }
-  }
   @media (max-width: 980px) {
     .hero-grid { grid-template-columns: 1fr; }
     .chart-pair { grid-template-columns: 1fr; }
     .kpis { flex-direction: row; flex-wrap: wrap; }
     .kpi { min-width: 160px; }
-    .sm-grid { grid-template-columns: repeat(3, 1fr); row-gap: 22px; }
-    .sm-cell:nth-child(3n+1) { border-left: none; padding-left: 0; }
   }
   @media (max-width: 860px) {
     .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 9px 14px; }
@@ -307,8 +265,6 @@
   @media (max-width: 760px) {
     .sidebar { display: none; }
     main { padding: 20px 16px 60px; }
-    .sm-grid { grid-template-columns: repeat(2, 1fr); }
-    .sm-cell:nth-child(2n+1) { border-left: none; padding-left: 0; }
   }
 </style>
 </head>
@@ -338,7 +294,6 @@
   <nav class="sidebar" id="sidebar">
     <div class="nav-label">Navigate</div>
     <a href="#summary" class="active"><span class="ico">&#9703;</span> Summary</a>
-    <a href="#overview"><span class="ico">&#9783;</span> Overview</a>
     <a href="#overhead"><span class="ico">&#9889;</span> Overhead</a>
     <a href="#cpu"><span class="ico">&#9638;</span> CPU</a>
     <a href="#io"><span class="ico">&#8644;</span> I/O</a>
@@ -362,24 +317,6 @@
       </div>
       <div style="margin-top:20px;">
         <div class="legend" id="legend"></div>
-      </div>
-    </section>
-
-    <!-- OVERVIEW: small-multiples grid (grafted from D) -->
-    <section id="overview">
-      <div class="sec-head">
-        <h2>Overview</h2>
-        <p>Every workload's curves side by side &mdash; p99 latency then throughput across concurrency, grouped by overhead / CPU / I/O so all crossovers scan in one glance.</p>
-      </div>
-      <div class="card sm-card">
-        <div class="sm-block">
-          <div class="sm-block-label">p99 latency vs concurrency <span class="hint">lower is better &darr; &middot; shared per-panel scale</span></div>
-          <div class="sm-grid" id="smLatency"></div>
-        </div>
-        <div class="sm-block">
-          <div class="sm-block-label">Throughput vs concurrency <span class="hint">higher is better &uarr;</span></div>
-          <div class="sm-grid" id="smRps"></div>
-        </div>
       </div>
     </section>
 
@@ -426,20 +363,9 @@ const WL_DESC = {
 const srvLabel = (s) => SRV_LABEL[s] || s;
 const cell = (s, w, c) => DATA.cells.find(x => x.server === s && x.workload === w && x.concurrency === c);
 
-/* group lookup helpers */
-const GROUP_OF = {};
-const GROUP_START = {};
-(DATA.groups || []).forEach(g => {
-  (g.workloads || []).forEach((w, i) => {
-    GROUP_OF[w] = g.label;
-    if (i === 0) GROUP_START[w] = true;
-  });
-});
-
 /* hidden-server state shared across charts */
 const hidden = new Set();
 const charts = [];        /* per-group server line charts (legend-toggleable) */
-const overviewCharts = []; /* small-multiples charts (also legend-toggleable) */
 
 /* ===== CROSSOVER HELPERS (grafted from B) ===== */
 function leaderAt(w, c, metric, lower) {
@@ -557,7 +483,7 @@ function renderLegend() {
   });
 }
 function applyVisibility() {
-  [...charts, ...overviewCharts].forEach(ch => {
+  [...charts].forEach(ch => {
     if (!ch.config._serverChart) return;
     ch.data.datasets.forEach(ds => {
       if (ds._server) ds.hidden = hidden.has(ds._server);
@@ -569,94 +495,6 @@ function applyVisibility() {
 /* ===== THEME-AWARE COLORS ===== */
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-/* ===== OVERVIEW SMALL MULTIPLES (grafted from D) ===== */
-function buildSmallMultiple(canvas, w, metric, lower) {
-  const labels = DATA.concurrencies.map(String);
-  const tcol = cssVar('--text-3');
-  const grid = cssVar('--grid');
-  const datasets = DATA.servers.map(s => {
-    const data = DATA.concurrencies.map(c => { const cc = cell(s, w, c); return cc ? cc[metric] : null; });
-    return {
-      label: srvLabel(s), _server: s, data,
-      borderColor: COLORS[s], backgroundColor: COLORS[s],
-      borderWidth: 1.4, pointRadius: 1.6, pointHoverRadius: 3.5,
-      tension: .2, fill: false, spanGaps: true,
-      hidden: hidden.has(s)
-    };
-  });
-  const ch = new Chart(canvas, {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      layout: { padding: { top: 2, right: 3, bottom: 0, left: 0 } },
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: cssVar('--card'), titleColor: cssVar('--text'),
-          bodyColor: cssVar('--text-2'), borderColor: cssVar('--border-strong'),
-          borderWidth: 1, padding: 8, cornerRadius: 7, boxPadding: 3,
-          titleFont: { size: 10 }, bodyFont: { size: 10 },
-          callbacks: {
-            title: (it) => `c = ${it[0].label}`,
-            label: (it) => {
-              if (it.parsed.y == null) return null;
-              const unit = (metric === 'rps_median') ? ' req/s' : ' ms';
-              const v = (metric === 'rps_median') ? Math.round(it.parsed.y).toLocaleString() : it.parsed.y;
-              return `${it.dataset.label}: ${v}${unit}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: { display: false, drawBorder: false },
-          ticks: { maxRotation: 0, autoSkip: false, padding: 3, color: tcol, font: { size: 8.5 } }
-        },
-        y: {
-          type: 'logarithmic',
-          grid: { color: grid, drawBorder: false, lineWidth: 1 },
-          ticks: {
-            color: tcol, font: { size: 8 }, padding: 3, maxTicksLimit: 4,
-            callback: (v) => {
-              if (metric === 'rps_median' && v >= 1000) return (v / 1000) + 'k';
-              return v;
-            }
-          }
-        }
-      }
-    }
-  });
-  ch.config._serverChart = true;
-  overviewCharts.push(ch);
-}
-
-function buildOverviewGrid(containerId, metric, lower) {
-  const cont = document.getElementById(containerId);
-  cont.innerHTML = '';
-  const axisLabel = (metric === 'rps_median') ? 'req/s · log' : 'p99 ms · log';
-  DATA.workloads.forEach(w => {
-    const cellEl = document.createElement('div');
-    cellEl.className = 'sm-cell' + (GROUP_START[w] ? ' grp-start' : '');
-    const tag = GROUP_START[w] ? (GROUP_OF[w] || '') : '';
-    cellEl.innerHTML =
-      `<span class="grp-tag">${tag}</span>` +
-      `<h4>${w}</h4>` +
-      `<div class="sm-canvas-box"><canvas></canvas></div>` +
-      `<div class="sm-axis-note">${axisLabel} &middot; c ${DATA.concurrencies[0]}&ndash;${DATA.concurrencies[DATA.concurrencies.length - 1]}</div>` +
-      `<div class="sm-cross">${crossoverCaption(w, metric, lower)}</div>`;
-    cont.appendChild(cellEl);
-    buildSmallMultiple(cellEl.querySelector('canvas'), w, metric, lower);
-  });
-}
-function renderOverview() {
-  overviewCharts.forEach(c => c.destroy());
-  overviewCharts.length = 0;
-  buildOverviewGrid('smLatency', 'p99_median', true);
-  buildOverviewGrid('smRps', 'rps_median', false);
 }
 
 /* ===== PER-GROUP LINE CHARTS ===== */
@@ -836,7 +674,6 @@ function rebuildCharts() {
   charts.length = 0;
   document.getElementById('groupSections').innerHTML = '';
   renderGroups();
-  renderOverview();
   applyVisibility();
   if (memChart) memChart.destroy();
   renderMemory();
@@ -863,7 +700,6 @@ renderPills();
 renderHeatmap();
 renderKpis();
 renderLegend();
-renderOverview();
 renderGroups();
 renderMemory();
 initScrollSpy();

@@ -29,10 +29,10 @@ cd "$(dirname "$0")"
 SERVERS="${SERVERS:-swoole openswoole roadrunner frankenphp fpm}"
 # Grouped: overhead (hello) -> cpu (hash, mandelbrot, json) -> io (db).
 WORKLOADS="${WORKLOADS:-hello hash mandelbrot json db}"
-CONCURRENCIES="${CONCURRENCIES:-8 32 128}"
+CONCURRENCIES="${CONCURRENCIES:-8 16 32 64 128}"
 RUNS="${RUNS:-3}"
 DURATION="${DURATION:-30}"     # measured seconds per run
-WARMUP="${WARMUP:-10}"         # discarded warmup seconds per (server,workload)
+WARMUP="${WARMUP:-10}"         # discarded warmup seconds per concurrency level
 THREADS="${THREADS:-4}"
 TIMEOUT="${TIMEOUT:-15s}"      # wrk per-request timeout — slow cells get measured, not censored
 SETTLE="${SETTLE:-3}"          # teardown settle delay between (server,workload)

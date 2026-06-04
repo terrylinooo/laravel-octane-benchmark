@@ -21,7 +21,7 @@ on:
         default: "hello hash mandelbrot json db"
       concurrencies:
         description: "Concurrency levels (space-separated)"
-        default: "8 32 128"
+        default: "8 16 32 64 128"
       runs:
         description: "Runs per cell (median of)"
         default: "2"
@@ -29,8 +29,8 @@ on:
         description: "Measured seconds per run"
         default: "20"
       warmup:
-        description: "Discarded warmup seconds per (server, workload)"
-        default: "8"
+        description: "Discarded warmup seconds per concurrency level"
+        default: "10"
       publish:
         description: "Deploy docs/ to GitHub Pages (Settings -> Pages -> Source: GitHub Actions)"
         type: boolean

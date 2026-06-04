@@ -88,7 +88,7 @@ behavior,"** not an isolated raw-query measurement. It's labeled as such on the 
 **Locally** — **Prerequisite:** Docker (Compose v2).
 
 ```bash
-# Full matrix (5 servers × 5 workloads × concurrency 8/32/128 × 3 runs ≈ 4-5 hours).
+# Full matrix (5 servers × 5 workloads × concurrency 8/16/32/64/128 × 3 runs).
 # Resumable — a cell whose JSON exists is skipped, so a crash never restarts from zero.
 ./benchmark.sh
 
