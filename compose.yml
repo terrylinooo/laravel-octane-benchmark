@@ -20,7 +20,7 @@ name: laravel-octane-benchmark
 #   * SUT_CPUS + SUT_CPUSET -> the "system under test" gets the host's LOWER half of
 #     cores. benchmark.sh splits the host: SUT=2 cpus / cpuset 0-1 on the 4-core CI
 #     runner, SUT=4 / cpuset 0-3 on an 8-core host. Defaults here = the CI case.
-#   * mem_limit=8g (env MEM_LIMIT) -> generous EQUAL ceiling. The 16 GB runner has
+#   * mem_limit=4g (env MEM_LIMIT) -> generous EQUAL ceiling. The 16 GB runner has
 #     headroom (one server at a time), so this never binds in practice: no server is
 #     OOM-penalized and peak RSS reads the true high-water mark instead of being
 #     clamped at the limit. Set MEM_LIMIT=512m for a deliberate small-VPS scenario.
@@ -34,7 +34,7 @@ x-octane: &octane
   restart: unless-stopped
   cpus: "${SUT_CPUS:-2}"
   cpuset: "${SUT_CPUSET:-0-1}"
-  mem_limit: "${MEM_LIMIT:-8g}"
+  mem_limit: "${MEM_LIMIT:-4g}"
   volumes:
     - ./:/var/www/html
   environment: &octane-env
@@ -116,7 +116,7 @@ services:
     restart: unless-stopped
     cpus: "${SUT_CPUS:-2}"
     cpuset: "${SUT_CPUSET:-0-1}"
-    mem_limit: "${MEM_LIMIT:-8g}"
+    mem_limit: "${MEM_LIMIT:-4g}"
     volumes:
       - ./:/var/www/html
       - ./docker/fpm/pool.conf:/usr/local/etc/php-fpm.d/zz-benchmark.conf:ro

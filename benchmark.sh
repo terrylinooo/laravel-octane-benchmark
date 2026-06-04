@@ -134,7 +134,7 @@ build_manifest() {
     --arg commit "$commit" --arg host "$host" --arg nproc "$NPROC" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg worker_counts "$WORKER_COUNTS" \
-    --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-8g}" \
+    --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-4g}" \
     --arg wrk "wrk -t${THREADS} -d${DURATION}s --timeout ${TIMEOUT} --latency" \
     --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
     '{php:$php, laravel:$laravel, octane:$octane, worker_counts:$worker_counts, caps:$caps,

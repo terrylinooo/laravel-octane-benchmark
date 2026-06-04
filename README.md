@@ -42,7 +42,7 @@ are flagged, never silently averaged in.
 | Workers | **swept** (`WORKER_COUNTS`, default ~2/cpu and its ×2 → `4 8` on the 2-cpu runner); FPM `max_children` matched | a matrix dimension — see how each server scales with workers. Same count for every server (incl. the FPM control) per pass |
 | CPU | **the host's lower half** — `cpus=2`, `cpuset=0-1` on the 4-core runner (`cpus=4`, `cpuset=0-3` on an 8-core host) | every server gets the same cores; the SUT cpu count is recorded in the manifest caps |
 | Load generator | **`wrk` on the host's upper half** (`cpuset=2-3` on the runner, `4-7` on 8 cores) — disjoint from the SUT | the generator is **always isolated**: it never steals the SUT's CPU. Recorded per-cell as `generator_isolated` |
-| Memory | `mem_limit=8g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
+| Memory | `mem_limit=4g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
 | OPcache | enabled, `validate_timestamps=0` | code compiled once, like Octane keeps it |
 | App env | `APP_ENV=production`, `APP_DEBUG=false` | production code paths |
 | Sessions | `SESSION_DRIVER=array` | stateless endpoints — nothing serializes on a write lock |
