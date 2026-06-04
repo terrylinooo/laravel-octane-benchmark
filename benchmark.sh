@@ -30,7 +30,7 @@ SERVERS="${SERVERS:-swoole openswoole roadrunner frankenphp fpm}"
 # Grouped: overhead (hello) -> cpu (hash, mandelbrot, json) -> io (db).
 WORKLOADS="${WORKLOADS:-hello hash mandelbrot json db}"
 CONCURRENCIES="${CONCURRENCIES:-8 16 32 64 128}"
-RUNS="${RUNS:-3}"
+RUNS="${RUNS:-2}"
 DURATION="${DURATION:-30}"     # measured seconds per run
 WARMUP="${WARMUP:-10}"         # discarded warmup seconds per concurrency level
 THREADS="${THREADS:-4}"

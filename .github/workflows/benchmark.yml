@@ -27,7 +27,7 @@ on:
         default: "2"
       duration:
         description: "Measured seconds per run"
-        default: "20"
+        default: "30"
       warmup:
         description: "Discarded warmup seconds per concurrency level"
         default: "10"
