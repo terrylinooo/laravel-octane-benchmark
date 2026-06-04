@@ -26,8 +26,8 @@ on:
         description: "Runs per cell (median of)"
         default: "2"
       duration:
-        description: "Measured seconds per run"
-        default: "30"
+        description: "Measured seconds per run (CI default 20 keeps the full matrix < 6h)"
+        default: "20"
       warmup:
         description: "Discarded warmup seconds per concurrency level"
         default: "10"
