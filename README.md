@@ -1,5 +1,7 @@
 # Laravel Octane Benchmark
 
+**English** · [繁體中文](readmes/README.zh-Hant.md) · [简体中文](readmes/README.zh-Hans.md) · [日本語](readmes/README.ja.md) · [한국어](readmes/README.ko.md) · [Español](readmes/README.es.md) · [Deutsch](readmes/README.de.md) · [Русский](readmes/README.ru.md) · [Italiano](readmes/README.it.md) · [Français](readmes/README.fr.md) · [Português](readmes/README.pt.md)
+
 A reproducible harness that benchmarks the Laravel Octane application servers
 (**Swoole**, **OpenSwoole**, **RoadRunner**, **FrankenPHP**) against a traditional
 **PHP-FPM + nginx** control group — and shows *where each one wins*.
@@ -37,10 +39,10 @@ are flagged, never silently averaged in.
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **8** everywhere (FPM `pm=static, max_children=8`) | same concurrency budget |
+| Workers | **8** everywhere (FPM `pm=static, max_children=8`) | same budget; Octane's ~2 workers/CPU × 4 cores |
 | CPU | **`cpus=4`, `cpuset=0-3`** per app container | each server gets the same 4 physical cores |
-| Load generator | **`wrk` pinned to `cpuset=4-7`** | the generator never steals the server's CPU |
-| Memory | `mem_limit=512m` | same ceiling |
+| Load generator | **`wrk` pinned via `${WRK_CPUSET}`** — `4-7` on an 8-core+ host (isolated), `0-3` on the 4-core default runner (co-resident) | isolates the generator when cores exist for it; disclosed per-cell as `generator_isolated` |
+| Memory | `mem_limit=8g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
 | OPcache | enabled, `validate_timestamps=0` | code compiled once, like Octane keeps it |
 | App env | `APP_ENV=production`, `APP_DEBUG=false` | production code paths |
 | Sessions | `SESSION_DRIVER=array` | stateless endpoints — nothing serializes on a write lock |
@@ -48,6 +50,14 @@ are flagged, never silently averaged in.
 
 The harness runs **one app server at a time** (all others stopped) so its CPU/RAM are
 measured in isolation, not under contention from idle siblings.
+
+**Default environment: a GitHub Actions `ubuntu-24.04` runner (4 vCPU / 16 GB RAM).**
+`benchmark.sh` adapts to the core count: the SUT always gets `cpuset 0-3`, and the `wrk`
+generator is isolated on cores `4-7` **only when the host has ≥ 8 cores**. On the 4-core
+runner there are no cores `4-7`, so the generator shares `0-3` with the SUT — each cell
+records `generator_isolated: false`. Because CI runners are also noisy neighbors, read
+those runs as **relative-only**. For generator-isolated numbers, run on an 8-core+ box
+(the harness picks `WRK_CPUSET=4-7` automatically, or set it yourself).
 
 ## Workloads
 
@@ -69,7 +79,12 @@ behavior,"** not an isolated raw-query measurement. It's labeled as such on the 
 
 ## Run it
 
-**Prerequisite:** Docker (Compose v2).
+**In CI (the default):** trigger the **Benchmark** workflow
+(`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. It runs on
+`ubuntu-24.04`, builds the report, and uploads `results/` + `docs/` as an artifact
+(optionally publishing `docs/` to `gh-pages`). Inputs let you scale the matrix.
+
+**Locally** — **Prerequisite:** Docker (Compose v2).
 
 ```bash
 # Full matrix (5 servers × 5 workloads × concurrency 8/32/128 × 3 runs ≈ 4-5 hours).
@@ -108,15 +123,21 @@ JSON line with full latency percentiles and per-class error counts.
   wins where) is the portable finding.
 - **Pinning self-check.** If the host doesn't honor `--cpuset-cpus`, every cell is tagged
   `pinning=unverified` and the result is not presented as generator-isolated.
+- **Generator co-residence on 4 cores.** On the default `ubuntu-24.04` runner the load
+  generator shares the SUT's cores (`generator_isolated: false`). The comparison stays
+  fair — every server is measured under the *same* co-resident generator — but absolute
+  latency is inflated versus an 8-core isolated run. It's a relative measurement either way.
 - **`cpu`-group calibration.** `BENCH_HASH_ITERATIONS` (default 2000),
   `BENCH_MANDELBROT_REPEAT` (1), and `BENCH_JSON_ITERATIONS` (1000) should be tuned on
   your box so each `cpu`-group route's latency clearly dominates `/bench/hello`.
 
 ## Roadmap
 
-- **Phase 2 — living benchmark:** GitHub Actions re-runs on each PHP/Octane/server release
-  and auto-publishes to `gh-pages`. (Caveat: CI runners are noisy; needs a self-hosted
-  runner or a loud relative-only disclaimer.)
+- **Phase 2 — living benchmark:** the GitHub Actions workflow already runs the matrix on
+  `ubuntu-24.04` and can publish to `gh-pages`. Next: a `schedule:` trigger to auto-re-run
+  on each PHP/Octane/server release. (Caveat: hosted runners are noisy; for isolated
+  absolute numbers use a self-hosted 8-core+ runner — the harness will then pin `wrk` to
+  `4-7` automatically.)
 - **Phase 3 — decision engine:** "tell me my app's shape → which server + worker count."
 
 ## Layout
@@ -129,4 +150,5 @@ docker/fpm/ , docker/nginx/ # FPM pool + opcache parity, nginx FastCGI front
 benchmark.sh               # the matrix harness
 bench/aggregate.py         # results → RESULTS.md + docs/ charts
 database/migrations/*bench_items*  # seeds the /bench/db table
+.github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 ```

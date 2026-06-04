@@ -4,8 +4,12 @@
 #
 # Runs ONE app server at a time (others stopped), sweeps concurrency, and writes
 # one JSON result per cell with an embedded manifest. The whole point is fairness:
-#   * each server gets exactly 4 pinned cores (cpuset 0-3), wrk gets cores 4-7
-#   * 8 workers everywhere, opcache + production parity, stateless endpoints
+#   * each server gets exactly 4 pinned cores (cpuset 0-3); 8 workers everywhere
+#     (Octane's ~2 workers/CPU guidance × 4 cores), opcache + production parity
+#   * the wrk generator is isolated on cores 4-7 ON AN 8-CORE+ HOST. The default
+#     measurement target is a GitHub Actions ubuntu-24.04 runner = 4 vCPU only, so
+#     cores 4-7 don't exist and wrk shares 0-3 with the SUT (co-resident). The
+#     harness auto-detects this (nproc) and records generator_isolated per cell.
 #   * latency percentiles (p50/p99) from wrk are the headline metric
 #   * peak RSS (cgroup v1 memory.max_usage_in_bytes) is captured per (server,workload)
 #   * cells with wrk errors are recorded so bad cells can't masquerade as clean
@@ -32,6 +36,19 @@ THREADS="${THREADS:-4}"
 SETTLE="${SETTLE:-3}"          # teardown settle delay between (server,workload)
 RESULTS_DIR="${RESULTS_DIR:-results}"
 APP_SERVICES="swoole openswoole roadrunner frankenphp fpm nginx"
+
+# ---- load-generator core placement (the only thing that adapts to host size) ---
+# SUT is always cpuset 0-3. If the host has >= 8 cores we isolate wrk on 4-7 (the
+# generator never steals the SUT's CPU). On a 4-core box (the default CI runner)
+# cores 4-7 don't exist, so wrk shares 0-3 with the SUT. compose reads WRK_CPUSET.
+NPROC="$(nproc)"
+if [ -z "${WRK_CPUSET:-}" ]; then
+  if [ "$NPROC" -ge 8 ]; then WRK_CPUSET="4-7"; else WRK_CPUSET="0-3"; fi
+fi
+export WRK_CPUSET
+# Isolated only when the generator's first core is disjoint from the SUT's 0-3.
+first_core="${WRK_CPUSET%%[-,]*}"
+if [ "${first_core:-0}" -ge 4 ] 2>/dev/null; then GEN_ISOLATED=true; else GEN_ISOLATED=false; fi
 
 dc() { docker compose "$@"; }
 
@@ -82,13 +99,15 @@ build_manifest() {
   host=$(uname -srm)
   jq -n \
     --arg php "${php_ver:-8.4.x}" --arg octane "${octane_ver:-?}" --arg laravel "${laravel_ver:-?}" \
-    --arg commit "$commit" --arg host "$host" --arg nproc "$(nproc)" \
+    --arg commit "$commit" --arg host "$host" --arg nproc "$NPROC" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson workers 8 \
-    --arg caps "cpus=4,cpuset=0-3,mem=512m" \
+    --arg caps "cpus=4,cpuset=0-3,mem=${MEM_LIMIT:-8g}" \
     --arg wrk "wrk -t${THREADS} -d${DURATION}s --latency" \
+    --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
     '{php:$php, laravel:$laravel, octane:$octane, workers:$workers, caps:$caps,
-      commit:$commit, host:$host, nproc:($nproc|tonumber), wrk_cmd:$wrk, generated_at:$date}'
+      commit:$commit, host:$host, nproc:($nproc|tonumber), wrk_cmd:$wrk,
+      wrk_cpuset:$wrk_cpuset, generator_isolated:$gen_isolated, generated_at:$date}'
 }
 
 # ---- one wrk run -> writes a cell file ----------------------------------------
@@ -120,6 +139,8 @@ run_cell() {
 echo "Servers:       $SERVERS"
 echo "Workloads:     $WORKLOADS"
 echo "Concurrencies: $CONCURRENCIES   Runs/cell: $RUNS   Duration: ${DURATION}s   Warmup: ${WARMUP}s"
+echo "Cores:         nproc=$NPROC   SUT=cpuset 0-3   wrk=cpuset $WRK_CPUSET   generator_isolated=$GEN_ISOLATED"
+[ "$GEN_ISOLATED" = false ] && echo "  ! 4-core host: load generator shares the SUT's cores (co-resident) — results are relative-only."
 echo
 
 echo "==> Preparing backend (mysql) ..."

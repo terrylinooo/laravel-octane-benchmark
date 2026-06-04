@@ -15,10 +15,16 @@ name: laravel-octane-benchmark
 # 18000+ range avoids colliding with other local dev containers.
 #
 # Fairness knobs (held identical across every server):
-#   * 8 workers each (FPM pm=static max_children=8)
+#   * 8 workers each (FPM pm=static max_children=8) -> Octane's ~2 workers/CPU × 4
 #   * cpus=4 + cpuset=0-3  -> the "system under test" gets exactly 4 physical cores
-#   * mem_limit=512m
-#   * wrk pinned to cores 4-7 so the load generator never steals the server's CPU
+#   * mem_limit=8g (env MEM_LIMIT) -> generous EQUAL ceiling. The 16 GB runner has
+#     headroom (one server at a time), so this never binds in practice: no server is
+#     OOM-penalized and peak RSS reads the true high-water mark instead of being
+#     clamped at the limit. Set MEM_LIMIT=512m for a deliberate small-VPS scenario.
+#   * wrk pinned via ${WRK_CPUSET} so the load generator never steals the SUT's CPU.
+#     benchmark.sh sets it from nproc: cores 4-7 on an 8-core+ host (isolated), or
+#     0-3 on the default 4-core GitHub Actions runner (shared/co-resident — there
+#     are no cores 4-7 to isolate onto). Defaults to 0-3 if invoked without it.
 #   * opcache parity, APP_ENV=production, SESSION_DRIVER=array (stateless endpoints)
 
 x-octane: &octane
@@ -26,7 +32,7 @@ x-octane: &octane
   restart: unless-stopped
   cpus: 4
   cpuset: "0-3"
-  mem_limit: 512m
+  mem_limit: "${MEM_LIMIT:-8g}"
   volumes:
     - ./:/var/www/html
   environment: &octane-env
@@ -64,7 +70,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: swoole
-    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
 
   openswoole:
     <<: *octane
@@ -74,7 +80,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: swoole
-    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
 
   roadrunner:
     <<: *octane
@@ -84,7 +90,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: roadrunner
-    command: ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rpc-port=6001", "--workers=8"]
+    command: ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rpc-port=6001", "--workers=${OCTANE_WORKERS:-8}"]
 
   frankenphp:
     <<: *octane
@@ -94,7 +100,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: frankenphp
-    command: ["php", "artisan", "octane:start", "--server=frankenphp", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+    command: ["php", "artisan", "octane:start", "--server=frankenphp", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
 
   # --- Control group: traditional PHP-FPM + nginx (NOT Octane) ----------------
   # FPM boots the framework per request, so it's the baseline. FPM speaks FastCGI
@@ -106,7 +112,7 @@ services:
     restart: unless-stopped
     cpus: 4
     cpuset: "0-3"
-    mem_limit: 512m
+    mem_limit: "${MEM_LIMIT:-8g}"
     volumes:
       - ./:/var/www/html
       - ./docker/fpm/pool.conf:/usr/local/etc/php-fpm.d/zz-benchmark.conf:ro
@@ -183,7 +189,9 @@ services:
     build:
       context: ./docker/wrk
     image: octane-bench/wrk:latest
-    cpuset: "4-7"
+    # Set by benchmark.sh from nproc: 4-7 (isolated, 8-core host) or 0-3 (shared,
+    # 4-core CI runner). Defaults to 0-3 so a bare `docker compose run wrk` is valid.
+    cpuset: "${WRK_CPUSET:-0-3}"
     mem_limit: 256m
     profiles: ["tools"]
     # Joins the default project network; targets app servers by service name

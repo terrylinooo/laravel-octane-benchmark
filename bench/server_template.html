@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Laravel Octane Benchmark &middot; Server report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --card-2: #fbfcfd;
+    --border: #e8eaef;
+    --border-strong: #dfe2e9;
+    --text: #1a1d23;
+    --text-2: #5b6471;
+    --text-3: #8b94a3;
+    --accent: #6366f1;
+    --accent-soft: #eef0ff;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg: 0 4px 16px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05);
+    --pill-bg: #f1f3f7;
+    --grid: rgba(16,24,40,.07);
+    --sidebar-active: #eef0ff;
+    --cross: #9a3b2e;
+    --dim: #b6bcc7;
+  }
+  html[data-theme="dark"] {
+    --bg: #0f1115;
+    --card: #161922;
+    --card-2: #1b1f2a;
+    --border: #262b38;
+    --border-strong: #303644;
+    --text: #e8ebf1;
+    --text-2: #9aa3b2;
+    --text-3: #6b7382;
+    --accent: #818cf8;
+    --accent-soft: #1e2233;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.35);
+    --shadow-lg: 0 6px 24px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+    --pill-bg: #1f2430;
+    --grid: rgba(255,255,255,.07);
+    --sidebar-active: #1e2233;
+    --cross: #f0a58e;
+    --dim: #3a4150;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background .25s ease, color .25s ease;
+  }
+
+  /* ===== Shared top header (identical on every page) ===== */
+  .topbar {
+    position: sticky; top: 0; z-index: 60;
+    background: color-mix(in srgb, var(--card) 85%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 11px 24px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+    color: var(--text); white-space: nowrap; justify-self: start;
+  }
+  .brand-logo { height: 30px; width: auto; display: block; }
+  .brand .wordmark {
+    font-size: 15px; font-weight: 650; letter-spacing: -.01em; color: var(--text);
+  }
+  .topnav {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--pill-bg); border: 1px solid var(--border);
+    padding: 4px; border-radius: 11px; justify-self: center;
+  }
+  .topnav a {
+    display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 8px;
+    color: var(--text-2); text-decoration: none; font-size: 13px; font-weight: 550;
+    transition: all .14s; white-space: nowrap;
+  }
+  .topnav a:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .topnav a.active {
+    background: var(--accent); color: #fff; font-weight: 600;
+    box-shadow: 0 1px 2px rgba(16,24,40,.18);
+  }
+  html[data-theme="dark"] .topnav a.active { color: #0f1115; }
+  .topbar-right { justify-self: end; display: inline-flex; align-items: center; }
+
+  /* ===== Meta strip (manifest pills + disclaimer, under the header) ===== */
+  .metastrip {
+    border-bottom: 1px solid var(--border);
+    background: var(--card-2);
+    padding: 11px 24px;
+  }
+  .pills { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--pill-bg); border: 1px solid var(--border);
+    color: var(--text-2); font-size: 11.5px; font-weight: 500;
+    padding: 3px 9px; border-radius: 7px; white-space: nowrap;
+  }
+  .pill b { color: var(--text); font-weight: 600; }
+  .pill.warn { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
+  html[data-theme="dark"] .pill.warn { background: #2a1d10; border-color: #5c3a17; color: #fdba74; }
+  .pill.info { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+  .theme-toggle {
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--card); color: var(--text-2); border-radius: 9px;
+    width: 38px; height: 34px; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 16px; transition: all .15s; flex-shrink: 0;
+  }
+  .theme-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+
+  /* ===== Layout ===== */
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 32px 80px; }
+  section { scroll-margin-top: 76px; margin-bottom: 44px; }
+  .sec-head { margin-bottom: 18px; }
+  .sec-head h2 {
+    font-size: 19px; font-weight: 680; margin: 0 0 3px;
+    letter-spacing: -.015em; display: flex; align-items: center; gap: 10px;
+  }
+  .sec-head .badge-group {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .sec-head p { margin: 0; color: var(--text-2); font-size: 13.5px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 20px;
+  }
+  .card-title { font-size: 14px; font-weight: 640; margin: 0 0 2px; letter-spacing: -.01em; }
+  .card-sub { font-size: 12.5px; color: var(--text-3); margin: 0 0 16px; }
+
+  /* ===== Hero ===== */
+  .hero {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: var(--shadow); padding: 24px 26px;
+    margin-bottom: 30px; position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+    background: var(--srv-color, var(--accent));
+  }
+  .hero-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .hero-name {
+    font-size: 26px; font-weight: 740; letter-spacing: -.025em; margin: 0;
+  }
+  .srv-chip {
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px 5px 11px;
+    border-radius: 999px; font-size: 12.5px; font-weight: 650; color: #0c0f16;
+    background: var(--srv-color, var(--accent));
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+  }
+  .srv-chip .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(12,15,22,.55); }
+  .hero-verdict {
+    margin: 16px 0 0; font-size: 15px; line-height: 1.55; color: var(--text-2);
+    max-width: 70ch;
+  }
+  .hero-verdict b { color: var(--text); font-weight: 650; }
+  .hero-verdict .good { color: var(--srv-color, var(--accent)); font-weight: 700; }
+
+  .hero-controls {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--border);
+  }
+  .hero-controls label {
+    font-size: 11px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-3);
+  }
+  .cmp-select {
+    appearance: none; background: var(--card); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 9px;
+    padding: 7px 32px 7px 12px; font-size: 13px; font-weight: 550; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+    transition: border-color .14s;
+  }
+  .cmp-select:hover { border-color: var(--accent); }
+  .cmp-swatch { width: 11px; height: 11px; border-radius: 4px; display: inline-block; }
+  .cmp-legend { display: inline-flex; align-items: center; gap: 14px; margin-left: auto; flex-wrap: wrap; }
+  .cmp-legend .li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); font-weight: 550; }
+  .cmp-legend .li .bar { width: 18px; height: 0; border-top-style: solid; border-radius: 2px; }
+
+  /* ===== Workload cards ===== */
+  .group-cards { display: flex; flex-direction: column; gap: 18px; }
+  .wl-card { }
+  .wl-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+  .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
+  .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .chart-box { min-width: 0; }
+  .chart-box .ct {
+    font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .chart-box .ct .hint { font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .chart-wrap { position: relative; height: 220px; }
+  .wl-cross {
+    grid-column: 1 / -1; margin-top: 2px; font-size: 12px;
+    color: var(--text-2); border-top: 1px dashed var(--border);
+    padding-top: 12px; display: flex; align-items: center; gap: 7px;
+  }
+  .wl-cross .lab {
+    font-size: 10px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-3);
+  }
+  .wl-cross b { color: var(--cross); font-weight: 650; }
+
+  /* ===== Rank table ===== */
+  .ranktable { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .ranktable th {
+    font-size: 11px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .04em; padding: 0 6px 10px;
+    text-align: center;
+  }
+  .ranktable th.rowhdr { text-align: left; padding-left: 2px; }
+  .ranktable td { padding: 5px 6px; text-align: center; }
+  .ranktable td.rowhdr {
+    text-align: left; font-weight: 600; font-size: 13px; color: var(--text);
+    padding-left: 2px; white-space: nowrap;
+  }
+  .rpill {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 40px; padding: 7px 6px; border-radius: 9px;
+    font-weight: 650; font-size: 13px; line-height: 1;
+    background: var(--pill-bg); color: var(--text-2);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+  }
+  .rpill.best { color: #0c0f16; font-weight: 720; }
+  .rpill small { font-weight: 600; font-size: 10px; opacity: .7; margin-left: 3px; }
+  .rank-note { margin-top: 14px; font-size: 12px; color: var(--text-3); }
+  .rank-note .legkey { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
+  .rank-note .kpill { width: 18px; height: 14px; border-radius: 5px; display: inline-block; }
+
+  .mem-wrap { position: relative; height: 280px; }
+  .footer-note {
+    margin-top: 14px; font-size: 12px; color: var(--text-3);
+    border-top: 1px dashed var(--border); padding-top: 14px;
+  }
+
+  @media (max-width: 980px) {
+    .chart-pair { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 860px) {
+    .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 9px 14px; }
+    .brand .wordmark { display: none; }
+    .topnav { gap: 2px; padding: 3px; }
+    .topnav a { padding: 5px 9px; font-size: 12px; }
+    .metastrip { padding: 9px 14px; }
+    main { padding: 22px 18px 60px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html" title="Home">
+    <img src="/*__LOGO__*/" alt="Laravel Octane Benchmark" class="brand-logo" />
+    <span class="wordmark">Laravel Octane Benchmark</span>
+  </a>
+  <nav class="topnav" id="topnav">
+    <a href="index.html" data-nav="compare">Compare</a>
+    <a href="swoole.html" data-nav="swoole">Swoole</a>
+    <a href="roadrunner.html" data-nav="roadrunner">RoadRunner</a>
+    <a href="frankenphp.html" data-nav="frankenphp">FrankenPHP</a>
+  </nav>
+  <div class="topbar-right">
+    <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">&#127769;</button>
+  </div>
+</header>
+
+<div class="metastrip">
+  <div class="pills" id="manifestPills"></div>
+</div>
+
+<main>
+  <!-- HERO -->
+  <div class="hero" id="hero">
+    <div class="hero-top">
+      <h1 class="hero-name" id="heroName"></h1>
+      <span class="srv-chip" id="heroChip"><span class="dot"></span><span id="heroChipLabel"></span></span>
+    </div>
+    <p class="hero-verdict" id="heroVerdict"></p>
+    <div class="hero-controls">
+      <label for="cmpSelect">Compare against</label>
+      <select class="cmp-select" id="cmpSelect"></select>
+      <span class="cmp-legend" id="cmpLegend"></span>
+    </div>
+  </div>
+
+  <!-- GROUP SECTIONS injected here -->
+  <div id="groupSections"></div>
+
+  <!-- RANK TABLE -->
+  <section id="ranks">
+    <div class="sec-head">
+      <h2>Rank table <span class="badge-group" id="rankBadge"></span></h2>
+      <p>This server's rank by p99 latency at each workload &amp; concurrency (1 = fastest). Rank&nbsp;1 cells are filled in the server color &mdash; see where it leads and where it trails.</p>
+    </div>
+    <div class="card">
+      <table class="ranktable" id="rankTable"></table>
+      <div class="rank-note" id="rankNote"></div>
+    </div>
+  </section>
+
+  <!-- MEMORY -->
+  <section id="memory">
+    <div class="sec-head">
+      <h2>Memory</h2>
+      <p>Peak resident set size (RSS) per server. This server's bar is highlighted; the rest are dimmed for context.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Peak RSS per server</div>
+      <div class="card-sub">Lower is better. Persistent workers (Octane) carry the framework in memory; FPM forks per request.</div>
+      <div class="mem-wrap"><canvas id="memChart"></canvas></div>
+      <div class="footer-note" id="memNote"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ===== INJECTED BY BUILD STEP ===== */
+const SERVER = /*__SERVER__*/;
+const DATA = /*__DATA__*/;
+
+/* ===== CONSTANTS ===== */
+const COLORS = {
+  swoole: "#4ade80", openswoole: "#22d3ee", roadrunner: "#f59e0b",
+  frankenphp: "#a78bfa", fpm: "#f87171"
+};
+const SRV_LABEL = {
+  swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
+  frankenphp: "FrankenPHP", fpm: "PHP-FPM"
+};
+const WL_DESC = {
+  hello: "Bare route — pure framework + server overhead",
+  hash: "bcrypt password hashing (cost-bound CPU)",
+  mandelbrot: "Tight numeric loop (heavy CPU)",
+  json: "Large JSON encode/decode (CPU)",
+  db: "Single indexed SELECT (I/O-bound)"
+};
+
+const srvLabel = (s) => SRV_LABEL[s] || s;
+const srvColor = (s) => COLORS[s] || "#888888";
+const SRV_C = srvColor(SERVER);
+
+/* cell() may be undefined for sparse data -> return null, skip safely */
+const cell = (s, w, c) => {
+  const list = (DATA && DATA.cells) || [];
+  return list.find(x => x.server === s && x.workload === w && x.concurrency === c) || null;
+};
+
+/* group lookup helpers */
+const GROUP_OF = {};
+(DATA.groups || []).forEach(g => {
+  (g.workloads || []).forEach(w => { GROUP_OF[w] = g.label; });
+});
+
+const charts = [];   /* all rebuildable line charts */
+let memChart = null;
+let cmpServer = null; /* currently selected comparison server (or null) */
+
+/* ===== THEME-AWARE COLORS ===== */
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+/* hex -> rgba with given alpha */
+function withAlpha(hex, a) {
+  const h = (hex || "#888888").replace("#", "");
+  const n = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  const r = parseInt(n.slice(0, 2), 16), g = parseInt(n.slice(2, 4), 16), b = parseInt(n.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/* ===== CROSSOVER HELPERS (reused from compare dashboard) ===== */
+function leaderAt(w, c, metric, lower) {
+  let best = null, bv = lower ? Infinity : -Infinity;
+  DATA.servers.forEach(s => {
+    const cc = cell(s, w, c); if (!cc) return;
+    const v = cc[metric]; if (v == null) return;
+    if (lower ? v < bv : v > bv) { bv = v; best = s; }
+  });
+  return best;
+}
+function crossoverCaption(w, metric, lower) {
+  const cs = DATA.concurrencies;
+  if (!cs || !cs.length) return "";
+  const cMin = cs[0], cMax = cs[cs.length - 1];
+  const a = leaderAt(w, cMin, metric, lower);
+  const b = leaderAt(w, cMax, metric, lower);
+  if (!a && !b) return "";
+  if (!a || !b) {
+    const only = a || b;
+    return `<b>${srvLabel(only)}</b> leads across the sweep.`;
+  }
+  if (a === b) return `<b>${srvLabel(a)}</b> leads across the sweep.`;
+  return `Lead flips: <b>${srvLabel(a)}</b> at c${cMin} &rarr; <b>${srvLabel(b)}</b> at c${cMax}.`;
+}
+
+/* ===== RANK / WIN ANALYSIS for THIS server ===== */
+/* rank of THIS server at (w,c) by p99 (1 = best). null if no cell for this server. */
+function rankAt(w, c) {
+  const mine = cell(SERVER, w, c);
+  if (!mine || mine.p99_median == null) return null;
+  let rank = 1, n = 0;
+  DATA.servers.forEach(s => {
+    const cc = cell(s, w, c);
+    if (!cc || cc.p99_median == null) return;
+    n++;
+    if (s !== SERVER && cc.p99_median < mine.p99_median) rank++;
+  });
+  return { rank, of: n };
+}
+
+/* ===== TOP NAV + META STRIP ===== */
+function renderNav() {
+  document.querySelectorAll('#topnav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.nav === SERVER);
+  });
+}
+function renderPills() {
+  const m = DATA.manifest || {};
+  const el = document.getElementById('manifestPills');
+  const items = [
+    ['PHP', m.php], ['Laravel', m.laravel], ['Octane', m.octane],
+    ['Workers', m.workers], ['Caps', m.caps], ['Commit', m.commit], ['Host', m.host]
+  ].filter(([k, v]) => v != null);
+  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${v}</b></span>`).join('');
+  if (m.generator_isolated === false) {
+    html += `<span class="pill warn" title="Load generator shared CPU with the app">&#9888; co-resident generator</span>`;
+  } else if (m.generator_isolated === true) {
+    html += `<span class="pill" title="Generator isolated">&#10003; isolated generator</span>`;
+  }
+  html += `<span class="pill info" title="All numbers are relative comparisons on identical hardware — not absolute production figures">&#9432; relative-only</span>`;
+  el.innerHTML = html;
+}
+
+/* ===== HERO ===== */
+function renderHero() {
+  document.documentElement.style.setProperty('--srv-color', SRV_C);
+  document.getElementById('heroName').textContent = srvLabel(SERVER);
+  document.getElementById('heroChip').style.background = SRV_C;
+  document.getElementById('heroChipLabel').textContent = SERVER;
+
+  /* verdict: wins X of N cells; strongest / weakest workload */
+  let wins = 0, total = 0;
+  const perWorkload = {}; /* workload -> {sumRank, n, worstRank, worstC} */
+  DATA.workloads.forEach(w => {
+    DATA.concurrencies.forEach(c => {
+      const r = rankAt(w, c);
+      if (!r) return;
+      total++;
+      if (r.rank === 1) wins++;
+      const pw = perWorkload[w] || (perWorkload[w] = { sum: 0, n: 0, worst: -1, worstC: null });
+      pw.sum += r.rank; pw.n++;
+      if (r.rank > pw.worst) { pw.worst = r.rank; pw.worstC = c; }
+    });
+  });
+
+  let strongest = null, sBest = Infinity, weakest = null, wWorst = -Infinity, weakC = null;
+  Object.entries(perWorkload).forEach(([w, pw]) => {
+    const avg = pw.sum / pw.n;
+    if (avg < sBest) { sBest = avg; strongest = w; }
+    if (avg > wWorst) { wWorst = avg; weakest = w; weakC = pw.worstC; }
+  });
+
+  let verdict;
+  if (total === 0) {
+    verdict = `No comparable data recorded for <b>${srvLabel(SERVER)}</b>.`;
+  } else {
+    let parts = [`Wins <span class="good">${wins} of ${total}</span> cells`];
+    if (strongest) parts.push(`strongest on <b>/bench/${strongest}</b>`);
+    if (weakest && weakest !== strongest) {
+      parts.push(`weakest on <b>/bench/${weakest}</b>${weakC != null ? ` at c${weakC}` : ''}`);
+    } else if (weakest && weakest === strongest && weakC != null) {
+      parts.push(`weakest moment on <b>/bench/${weakest}</b> at c${weakC}`);
+    }
+    verdict = parts.join('; ') + '.';
+  }
+  document.getElementById('heroVerdict').innerHTML = verdict;
+}
+
+/* ===== COMPARISON DROPDOWN ===== */
+function renderCmpSelect() {
+  const sel = document.getElementById('cmpSelect');
+  const others = DATA.servers.filter(s => s !== SERVER);
+  let html = '';
+  others.forEach(s => {
+    const label = s === 'fpm' ? 'PHP-FPM (control)' : srvLabel(s);
+    html += `<option value="${s}">${label}</option>`;
+  });
+  html += `<option value="">None</option>`;
+  sel.innerHTML = html;
+
+  /* default to fpm if present, else first other, else none */
+  if (others.includes('fpm')) cmpServer = 'fpm';
+  else if (others.length) cmpServer = others[0];
+  else cmpServer = null;
+  sel.value = cmpServer == null ? '' : cmpServer;
+
+  sel.addEventListener('change', () => {
+    cmpServer = sel.value === '' ? null : sel.value;
+    restyleCharts();
+    renderCmpLegend();
+  });
+  renderCmpLegend();
+}
+function renderCmpLegend() {
+  const el = document.getElementById('cmpLegend');
+  let html = `<span class="li"><span class="bar" style="border-top-width:3px;border-top-color:${SRV_C}"></span>${srvLabel(SERVER)}</span>`;
+  if (cmpServer) {
+    html += `<span class="li"><span class="bar" style="border-top-width:2px;border-top-color:${srvColor(cmpServer)}"></span>${srvLabel(cmpServer)}</span>`;
+  }
+  html += `<span class="li"><span class="bar" style="border-top-width:1.4px;border-top-color:${cssVar('--dim')}"></span>others</span>`;
+  el.innerHTML = html;
+}
+
+/* ===== DATASET STYLING (emphasis logic) ===== */
+function styleFor(s) {
+  const dim = cssVar('--dim');
+  if (s === SERVER) {
+    return {
+      borderColor: SRV_C, backgroundColor: withAlpha(SRV_C, .14),
+      borderWidth: 3.4, pointRadius: 4, pointHoverRadius: 6,
+      pointBackgroundColor: SRV_C, pointBorderColor: SRV_C, order: 1, z: 3
+    };
+  }
+  if (s === cmpServer) {
+    const c = srvColor(s);
+    return {
+      borderColor: c, backgroundColor: withAlpha(c, .08),
+      borderWidth: 2.2, pointRadius: 3, pointHoverRadius: 5,
+      pointBackgroundColor: c, pointBorderColor: c, order: 2, z: 2
+    };
+  }
+  return {
+    borderColor: withAlpha(dim, .55), backgroundColor: 'transparent',
+    borderWidth: 1.3, pointRadius: 0, pointHoverRadius: 4,
+    pointBackgroundColor: dim, pointBorderColor: dim, order: 3, z: 1,
+    borderDash: [4, 3]
+  };
+}
+function applyStyle(ds) {
+  const st = styleFor(ds._server);
+  ds.borderColor = st.borderColor;
+  ds.backgroundColor = st.backgroundColor;
+  ds.borderWidth = st.borderWidth;
+  ds.pointRadius = st.pointRadius;
+  ds.pointHoverRadius = st.pointHoverRadius;
+  ds.pointBackgroundColor = st.pointBackgroundColor;
+  ds.pointBorderColor = st.pointBorderColor;
+  ds.borderDash = st.borderDash || [];
+  ds.order = st.order;
+}
+
+/* ===== LINE CHART OPTIONS ===== */
+function baseLineOptions(yTitle, metric) {
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  return {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: cssVar('--card'), titleColor: cssVar('--text'),
+        bodyColor: cssVar('--text-2'), borderColor: cssVar('--border-strong'),
+        borderWidth: 1, padding: 10, cornerRadius: 8, boxPadding: 4,
+        usePointStyle: true,
+        callbacks: {
+          labelPointStyle: () => ({ pointStyle: 'circle' }),
+          label: (it) => {
+            if (it.parsed.y == null) return null;
+            const unit = (metric === 'rps_median') ? ' req/s' : ' ms';
+            const v = (metric === 'rps_median') ? Math.round(it.parsed.y).toLocaleString() : it.parsed.y;
+            return ` ${it.dataset.label}: ${v}${unit}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { grid: { color: grid, drawBorder: false }, ticks: { color: tcol, font: { size: 11 } } },
+      y: {
+        grid: { color: grid, drawBorder: false },
+        ticks: { color: tcol, font: { size: 11 } },
+        title: { display: true, text: yTitle, color: tcol, font: { size: 11, weight: '600' } }
+      }
+    },
+    elements: { line: { tension: .3 }, point: { hitRadius: 8 } }
+  };
+}
+
+function buildWorkloadChart(canvasId, w, metric, lower, yTitle) {
+  const labels = DATA.concurrencies.map(c => 'c' + c);
+  const datasets = DATA.servers.map(s => {
+    const data = DATA.concurrencies.map(c => { const cc = cell(s, w, c); return cc ? cc[metric] : null; });
+    const ds = { label: srvLabel(s), _server: s, data, spanGaps: true, fill: false };
+    applyStyle(ds);
+    return ds;
+  });
+  /* draw THIS server last so it sits on top */
+  datasets.sort((a, b) => (a._server === SERVER) - (b._server === SERVER));
+  const ctx = document.getElementById(canvasId);
+  const ch = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: baseLineOptions(yTitle, metric) });
+  ch.config._serverChart = true;
+  charts.push(ch);
+}
+
+function makeWorkloadCharts(w, container) {
+  const idLat = `lat-${w}`, idRps = `rps-${w}`;
+  container.querySelector('.chart-pair').innerHTML = `
+    <div class="chart-box">
+      <div class="ct">p99 latency <span class="hint">lower is better &darr;</span></div>
+      <div class="chart-wrap"><canvas id="${idLat}"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
+      <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
+    </div>
+    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>`;
+  buildWorkloadChart(idLat, w, 'p99_median', true, 'ms');
+  buildWorkloadChart(idRps, w, 'rps_median', false, 'req/s');
+}
+
+/* ===== GROUP SECTIONS ===== */
+function groupBlurb(g) {
+  return {
+    overhead: 'Bare routes isolate raw server + framework overhead — the persistent-worker advantage shows clearly here.',
+    cpu: 'CPU-bound work narrows the field: all servers run the same PHP, so latency converges as compute dominates.',
+    io: 'A real database query — concurrency lets persistent workers overlap I/O waits that FPM serializes.'
+  }[g] || '';
+}
+function renderGroups() {
+  const root = document.getElementById('groupSections');
+  root.innerHTML = '';
+  (DATA.groups || []).forEach(g => {
+    const sec = document.createElement('section');
+    sec.id = g.group;
+    sec.innerHTML = `
+      <div class="sec-head">
+        <h2>${g.label} <span class="badge-group">${g.workloads.length} workload${g.workloads.length > 1 ? 's' : ''}</span></h2>
+        <p>${groupBlurb(g.group)}</p>
+      </div>
+      <div class="group-cards"></div>`;
+    const wrap = sec.querySelector('.group-cards');
+    g.workloads.forEach(w => {
+      const card = document.createElement('div');
+      card.className = 'card wl-card';
+      card.innerHTML = `
+        <div class="wl-head">
+          <span class="name">${w}</span>
+          <span class="desc">${WL_DESC[w] || ''}</span>
+        </div>
+        <div class="chart-pair"></div>`;
+      wrap.appendChild(card);
+    });
+    root.appendChild(sec);
+    g.workloads.forEach((w, i) => makeWorkloadCharts(w, wrap.children[i]));
+  });
+}
+
+/* ===== RESTYLE (on comparison change / theme) ===== */
+function restyleCharts() {
+  charts.forEach(ch => {
+    if (!ch.config._serverChart) return;
+    ch.data.datasets.forEach(ds => { if (ds._server) applyStyle(ds); });
+    ch.update();
+  });
+}
+
+/* ===== RANK TABLE ===== */
+function renderRankTable() {
+  const t = document.getElementById('rankTable');
+  document.getElementById('rankBadge').textContent = srvLabel(SERVER);
+  let head = '<thead><tr><th class="rowhdr">Workload</th>';
+  DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
+  head += '</tr></thead>';
+  let body = '<tbody>';
+  DATA.workloads.forEach(w => {
+    body += `<tr><td class="rowhdr">${w}</td>`;
+    DATA.concurrencies.forEach(c => {
+      const r = rankAt(w, c);
+      if (!r) {
+        body += `<td><span class="rpill">&mdash;</span></td>`;
+      } else if (r.rank === 1) {
+        body += `<td><span class="rpill best" style="background:${SRV_C}">1<small>of ${r.of}</small></span></td>`;
+      } else {
+        body += `<td><span class="rpill">${r.rank}<small>of ${r.of}</small></span></td>`;
+      }
+    });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  t.innerHTML = head + body;
+  document.getElementById('rankNote').innerHTML =
+    `<span class="legkey"><span class="kpill" style="background:${SRV_C}"></span>rank 1 (fastest p99)</span>` +
+    `<span class="legkey"><span class="kpill" style="background:var(--pill-bg)"></span>rank 2+</span>`;
+}
+
+/* ===== MEMORY CHART ===== */
+function renderMemory() {
+  const peakBy = {};
+  (DATA.rss || []).forEach(r => { peakBy[r.server] = Math.max(peakBy[r.server] || 0, r.peak_rss_mib); });
+  const servers = DATA.servers.filter(s => peakBy[s] != null);
+  const vals = servers.map(s => peakBy[s]);
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  const dim = cssVar('--dim');
+  const ctx = document.getElementById('memChart');
+  memChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: servers.map(s => srvLabel(s)),
+      datasets: [{
+        label: 'Peak RSS (MiB)', data: vals,
+        backgroundColor: servers.map(s => s === SERVER ? srvColor(s) : withAlpha(dim, .5)),
+        borderColor: servers.map(s => s === SERVER ? srvColor(s) : withAlpha(dim, .7)),
+        borderWidth: servers.map(s => s === SERVER ? 0 : 1),
+        borderRadius: 7, barThickness: 30
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cssVar('--card'), titleColor: cssVar('--text'),
+          bodyColor: cssVar('--text-2'), borderColor: cssVar('--border-strong'),
+          borderWidth: 1, padding: 10, cornerRadius: 8,
+          callbacks: { label: c => ` ${c.parsed.x} MiB peak RSS` }
+        }
+      },
+      scales: {
+        x: { grid: { color: grid, drawBorder: false }, ticks: { color: tcol, font: { size: 11 } }, title: { display: true, text: 'MiB', color: tcol, font: { size: 11, weight: '600' } } },
+        y: {
+          grid: { display: false, drawBorder: false },
+          ticks: {
+            color: servers.map(s => s === SERVER ? cssVar('--text') : cssVar('--text-3')),
+            font: { size: 12, weight: '600' }
+          }
+        }
+      }
+    }
+  });
+  const mine = peakBy[SERVER];
+  const fpm = peakBy.fpm;
+  if (mine != null && fpm != null && SERVER !== 'fpm') {
+    const delta = mine - fpm;
+    const rel = delta >= 0
+      ? `${delta} MiB more than PHP-FPM's ${fpm} MiB`
+      : `${-delta} MiB less than PHP-FPM's ${fpm} MiB`;
+    document.getElementById('memNote').textContent =
+      `${srvLabel(SERVER)} peaks at ${mine} MiB — ${rel}. Persistent workers carry the framework warm in memory in exchange for lower latency and higher throughput.`;
+  } else if (mine != null) {
+    document.getElementById('memNote').textContent =
+      `${srvLabel(SERVER)} peaks at ${mine} MiB across all workloads.`;
+  } else {
+    document.getElementById('memNote').textContent =
+      'No peak RSS recorded for this server.';
+  }
+}
+
+/* ===== THEME ===== */
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('themeToggle').innerHTML = t === 'dark' ? '&#9728;' : '&#127769;';
+  rebuildAll();
+}
+function rebuildAll() {
+  charts.forEach(c => c.destroy());
+  charts.length = 0;
+  renderGroups();
+  restyleCharts();
+  if (memChart) memChart.destroy();
+  renderMemory();
+  renderRankTable();
+  renderCmpLegend();
+}
+
+/* ===== INIT ===== */
+renderNav();
+renderPills();
+renderHero();
+renderCmpSelect();
+renderGroups();
+restyleCharts();
+renderRankTable();
+renderMemory();
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  setTheme(cur === 'dark' ? 'light' : 'dark');
+});
+</script>
+</body>
+</html>

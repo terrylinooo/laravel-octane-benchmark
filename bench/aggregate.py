@@ -10,6 +10,7 @@ Pure stdlib. Reads results/*.json written by benchmark.sh.
 Median across runs is the headline; min/max show the spread so noise is visible.
 Cells that recorded any wrk errors are flagged, not hidden.
 """
+import base64
 import glob
 import json
 import os
@@ -72,6 +73,23 @@ WORKLOAD_GROUP = {
 }
 GROUP_ORDER = ["overhead", "cpu", "io"]
 GROUP_LABEL = {"overhead": "Overhead", "cpu": "CPU-bound", "io": "I/O"}
+
+
+# The three featured Octane servers that get a dedicated per-server report page
+# (linked from the header menu). OpenSwoole shares Swoole's driver and FPM is the
+# control, so they appear in the comparison but not as standalone reports.
+FEATURED_SERVERS = ["swoole", "roadrunner", "frankenphp"]
+
+
+def logo_data_uri():
+    """Embed readmes/laravel-bm.png as a base64 data URI so every generated page is
+    self-contained (gh-pages publishes only docs/, not readmes/). '' if absent."""
+    path = os.path.join(ROOT, "readmes", "laravel-bm.png")
+    try:
+        with open(path, "rb") as fh:
+            return "data:image/png;base64," + base64.b64encode(fh.read()).decode("ascii")
+    except OSError:
+        return ""
 
 
 def grouped(workloads):
@@ -178,82 +196,33 @@ def main():
     with open(os.path.join(ROOT, "RESULTS.md"), "w") as fh:
         fh.write("\n".join(lines))
 
-    # ---- index.html (self-contained: data embedded) ----
-    html = INDEX_HTML.replace("/*__DATA__*/", json.dumps(summary))
-    with open(os.path.join(DOCS, "index.html"), "w") as fh:
-        fh.write(html)
+    # ---- HTML pages (self-contained: data + logo injected into the templates) ----
+    here = os.path.dirname(__file__)
+    data_js = json.dumps(summary)
+    logo = logo_data_uri()
 
-    print(f"Wrote docs/summary.json, RESULTS.md, docs/index.html")
+    # Comparison dashboard -> docs/index.html
+    with open(os.path.join(here, "dashboard_template.html")) as fh:
+        index_tpl = fh.read()
+    index_html = index_tpl.replace("/*__DATA__*/", data_js).replace("/*__LOGO__*/", logo)
+    with open(os.path.join(DOCS, "index.html"), "w") as fh:
+        fh.write(index_html)
+
+    # Per-server deep-report pages -> docs/{server}.html (featured servers only)
+    featured = [s for s in FEATURED_SERVERS if s in servers]
+    with open(os.path.join(here, "server_template.html")) as fh:
+        server_tpl = fh.read()
+    for s in featured:
+        page = (server_tpl.replace("/*__DATA__*/", data_js)
+                          .replace("/*__LOGO__*/", logo)
+                          .replace("/*__SERVER__*/", json.dumps(s)))
+        with open(os.path.join(DOCS, f"{s}.html"), "w") as fh:
+            fh.write(page)
+
+    pages = "index.html, " + ", ".join(f"{s}.html" for s in featured)
+    print("Wrote docs/summary.json, RESULTS.md, docs/{" + pages + "}")
     print(f"  servers={servers}")
     print(f"  workloads={workloads}  concurrencies={concs}")
-
-
-INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Laravel Octane Benchmark</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<style>
-  body{font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
-  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
-  h1{font-size:26px;margin:0 0 4px} .sub{color:#9aa0a6;font-size:13px;margin-bottom:24px}
-  .note{background:#1a1d24;border-left:3px solid #5b8def;padding:10px 14px;border-radius:4px;color:#c7ccd1;font-size:13px;margin:18px 0}
-  h2{font-size:18px;margin:34px 0 6px;border-bottom:1px solid #2a2e37;padding-bottom:6px}
-  h2.group{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#5b8def;border-color:#5b8def33;margin-top:44px}
-  h3{font-size:16px;margin:22px 0 6px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-  @media(max-width:720px){.grid{grid-template-columns:1fr}}
-  .card{background:#161922;border:1px solid #2a2e37;border-radius:8px;padding:14px}
-  .ct{font-size:13px;color:#9aa0a6;margin-bottom:8px}
-  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
-  th,td{border:1px solid #2a2e37;padding:5px 8px;text-align:right} th:first-child,td:first-child{text-align:left}
-  code{background:#222631;padding:1px 5px;border-radius:3px}
-</style>
-</head>
-<body><div class="wrap">
-<h1>Laravel Octane Benchmark</h1>
-<div class="sub" id="meta"></div>
-<div class="note">Single-machine results — read them as <b>relative</b> (which server wins, and where it flips), not as absolute numbers for your hardware. Headline metric is <b>p99 latency</b> across a concurrency sweep; throughput and peak RSS shown alongside. Median of N runs/cell.</div>
-<div id="charts"></div>
-<h2>Peak RSS (MiB)</h2><div class="card"><div id="rss"></div></div>
-</div>
-<script>
-const DATA = /*__DATA__*/;
-const COLORS = {swoole:'#4ade80',openswoole:'#22d3ee',roadrunner:'#f59e0b',frankenphp:'#a78bfa',fpm:'#f87171'};
-const m = DATA.manifest||{};
-document.getElementById('meta').textContent =
-  `PHP ${m.php} · Laravel ${m.laravel} · Octane ${m.octane} · ${m.workers} workers · caps ${m.caps} · ${m.host} · commit ${m.commit} · ${m.generated_at}`;
-const cell=(s,w,c)=>DATA.cells.find(x=>x.server===s&&x.workload===w&&x.concurrency===c);
-function lineChart(canvas,w,metric,label){
-  const ds=DATA.servers.map(s=>({label:s,borderColor:COLORS[s]||'#888',backgroundColor:COLORS[s]||'#888',
-    tension:.2,data:DATA.concurrencies.map(c=>{const d=cell(s,w,c);return d?d[metric]:null;})}));
-  new Chart(canvas,{type:'line',data:{labels:DATA.concurrencies.map(c=>'c'+c),datasets:ds},
-    options:{plugins:{legend:{labels:{color:'#c7ccd1',boxWidth:12}}},
-      scales:{x:{ticks:{color:'#9aa0a6'},grid:{color:'#222'}},
-        y:{title:{display:true,text:label,color:'#9aa0a6'},ticks:{color:'#9aa0a6'},grid:{color:'#222'},beginAtZero:true}}}});
-}
-const root=document.getElementById('charts');
-const GROUPS=DATA.groups||[{label:'',workloads:DATA.workloads}];
-for(const grp of GROUPS){
-  if(grp.label){const gh=document.createElement('h2');gh.className='group';gh.textContent=grp.label;root.appendChild(gh);}
-  for(const w of grp.workloads){
-    const h=document.createElement('h3');h.innerHTML='<code>/bench/'+w+'</code>';root.appendChild(h);
-    const g=document.createElement('div');g.className='grid';
-    const c1=document.createElement('div');c1.className='card';c1.innerHTML='<div class="ct">p99 latency (ms) — lower is better</div><canvas></canvas>';
-    const c2=document.createElement('div');c2.className='card';c2.innerHTML='<div class="ct">throughput (req/s) — higher is better</div><canvas></canvas>';
-    g.appendChild(c1);g.appendChild(c2);root.appendChild(g);
-    lineChart(c1.querySelector('canvas'),w,'p99_median','p99 ms');
-    lineChart(c2.querySelector('canvas'),w,'rps_median','req/s');
-  }
-}
-// RSS table
-let t='<table><tr><th>Server</th>'+DATA.workloads.map(w=>'<th>'+w+'</th>').join('')+'</tr>';
-for(const s of DATA.servers){t+='<tr><td>'+s+'</td>'+DATA.workloads.map(w=>{
-  const r=DATA.rss.find(x=>x.server===s&&x.workload===w);return '<td>'+(r?r.peak_rss_mib:'–')+'</td>';}).join('')+'</tr>';}
-document.getElementById('rss').innerHTML=t+'</table>';
-</script>
-</body></html>"""
 
 
 if __name__ == "__main__":

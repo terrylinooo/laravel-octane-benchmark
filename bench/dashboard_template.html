@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Laravel Octane Benchmark</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --card-2: #fbfcfd;
+    --border: #e8eaef;
+    --border-strong: #dfe2e9;
+    --text: #1a1d23;
+    --text-2: #5b6471;
+    --text-3: #8b94a3;
+    --accent: #6366f1;
+    --accent-soft: #eef0ff;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg: 0 4px 16px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05);
+    --pill-bg: #f1f3f7;
+    --grid: rgba(16,24,40,.07);
+    --sidebar-active: #eef0ff;
+    --cross: #9a3b2e;
+  }
+  html[data-theme="dark"] {
+    --bg: #0f1115;
+    --card: #161922;
+    --card-2: #1b1f2a;
+    --border: #262b38;
+    --border-strong: #303644;
+    --text: #e8ebf1;
+    --text-2: #9aa3b2;
+    --text-3: #6b7382;
+    --accent: #818cf8;
+    --accent-soft: #1e2233;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.35);
+    --shadow-lg: 0 6px 24px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+    --pill-bg: #1f2430;
+    --grid: rgba(255,255,255,.07);
+    --sidebar-active: #1e2233;
+    --cross: #f0a58e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background .25s ease, color .25s ease;
+  }
+
+  /* ===== Shared top header (identical on every page) ===== */
+  .topbar {
+    position: sticky; top: 0; z-index: 60;
+    background: color-mix(in srgb, var(--card) 85%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 11px 24px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+    color: var(--text); white-space: nowrap; justify-self: start;
+  }
+  .brand-logo { height: 30px; width: auto; display: block; }
+  .brand .wordmark {
+    font-size: 15px; font-weight: 650; letter-spacing: -.01em; color: var(--text);
+  }
+  .topnav {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--pill-bg); border: 1px solid var(--border);
+    padding: 4px; border-radius: 11px; justify-self: center;
+  }
+  .topnav a {
+    display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 8px;
+    color: var(--text-2); text-decoration: none; font-size: 13px; font-weight: 550;
+    transition: all .14s; white-space: nowrap;
+  }
+  .topnav a:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .topnav a.active {
+    background: var(--accent); color: #fff; font-weight: 600;
+    box-shadow: 0 1px 2px rgba(16,24,40,.18);
+  }
+  html[data-theme="dark"] .topnav a.active { color: #0f1115; }
+  .topbar-right { justify-self: end; display: inline-flex; align-items: center; }
+
+  /* ===== Meta strip (manifest pills + disclaimer, under the header) ===== */
+  .metastrip {
+    border-bottom: 1px solid var(--border);
+    background: var(--card-2);
+    padding: 11px 24px;
+  }
+  .pills { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--pill-bg); border: 1px solid var(--border);
+    color: var(--text-2); font-size: 11.5px; font-weight: 500;
+    padding: 3px 9px; border-radius: 7px; white-space: nowrap;
+  }
+  .pill b { color: var(--text); font-weight: 600; }
+  .pill.warn { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
+  html[data-theme="dark"] .pill.warn { background: #2a1d10; border-color: #5c3a17; color: #fdba74; }
+  .pill.info { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+  .theme-toggle {
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--card); color: var(--text-2); border-radius: 9px;
+    width: 38px; height: 34px; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 16px; transition: all .15s; flex-shrink: 0;
+  }
+  .theme-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+
+  /* Layout */
+  .shell { display: flex; align-items: flex-start; }
+  .sidebar {
+    position: sticky; top: 54px; align-self: flex-start;
+    width: 188px; flex-shrink: 0; padding: 24px 14px;
+    height: calc(100vh - 54px);
+  }
+  .sidebar .nav-label {
+    font-size: 10.5px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-3); padding: 0 12px 8px;
+  }
+  .sidebar a {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 12px; border-radius: 9px; color: var(--text-2);
+    text-decoration: none; font-size: 13.5px; font-weight: 500;
+    margin-bottom: 2px; transition: all .13s;
+  }
+  .sidebar a:hover { background: var(--pill-bg); color: var(--text); }
+  .sidebar a.active { background: var(--sidebar-active); color: var(--accent); font-weight: 600; }
+  .sidebar a .ico { width: 15px; text-align: center; opacity: .9; }
+
+  main { flex: 1; min-width: 0; padding: 28px 32px 80px; max-width: 1280px; }
+  section { scroll-margin-top: 76px; margin-bottom: 44px; }
+  .sec-head { margin-bottom: 18px; }
+  .sec-head h2 {
+    font-size: 19px; font-weight: 680; margin: 0 0 3px;
+    letter-spacing: -.015em; display: flex; align-items: center; gap: 10px;
+  }
+  .sec-head .badge-group {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .sec-head p { margin: 0; color: var(--text-2); font-size: 13.5px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 20px;
+  }
+  .card-title {
+    font-size: 14px; font-weight: 640; margin: 0 0 2px; letter-spacing: -.01em;
+  }
+  .card-sub { font-size: 12.5px; color: var(--text-3); margin: 0 0 16px; }
+
+  /* Hero */
+  .hero-grid {
+    display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 20px; align-items: stretch;
+  }
+  .heatmap { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .heatmap th {
+    font-size: 11px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .04em; padding: 0 6px 10px;
+    text-align: center;
+  }
+  .heatmap th.rowhdr { text-align: left; padding-left: 2px; }
+  .heatmap td { padding: 5px 6px; text-align: center; }
+  .heatmap td.rowhdr {
+    text-align: left; font-weight: 600; font-size: 13px; color: var(--text);
+    padding-left: 2px; white-space: nowrap;
+  }
+  .heatmap td.rowhdr small { display: block; color: var(--text-3); font-weight: 500; font-size: 11px; }
+  .hpill {
+    display: inline-flex; flex-direction: column; align-items: center;
+    justify-content: center; width: 100%; padding: 8px 4px; border-radius: 9px;
+    font-weight: 650; font-size: 12.5px; color: #0c0f16; line-height: 1.25;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+  }
+  .hpill small { font-weight: 600; font-size: 10.5px; opacity: .78; }
+
+  .kpis { display: flex; flex-direction: column; gap: 14px; }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 4px; flex: 1; justify-content: center;
+  }
+  .kpi .label {
+    font-size: 11.5px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .kpi .val { font-size: 22px; font-weight: 720; letter-spacing: -.02em; display: flex; align-items: baseline; gap: 8px; }
+  .kpi .val .unit { font-size: 13px; font-weight: 500; color: var(--text-2); }
+  .kpi .srv {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
+    color: var(--text-2); font-weight: 500;
+  }
+  .swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+
+  /* Small-multiples overview (grafted from D) */
+  .sm-card { padding: 20px 22px 18px; }
+  .sm-block { margin-top: 8px; }
+  .sm-block + .sm-block { margin-top: 26px; }
+  .sm-block-label {
+    font-size: 12px; font-weight: 600; color: var(--text-2);
+    margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .sm-block-label .hint { font-size: 11px; font-weight: 500; color: var(--text-3); }
+  .sm-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 0;
+  }
+  .sm-cell {
+    padding: 0 13px; border-left: 1px solid var(--border);
+  }
+  .sm-cell:first-child { border-left: none; padding-left: 0; }
+  .sm-cell.grp-start { border-left: 1px solid var(--border-strong); }
+  .sm-cell h4 {
+    font-size: 13px; font-weight: 640; margin: 0 0 1px; color: var(--text);
+    letter-spacing: -.01em;
+  }
+  .sm-cell .grp-tag {
+    font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; display: block;
+    margin-bottom: 6px; height: 11px;
+  }
+  .sm-canvas-box { position: relative; height: 116px; }
+  .sm-axis-note {
+    font-size: 9.5px; color: var(--text-3); margin-top: 5px; font-weight: 500;
+  }
+  .sm-cross {
+    font-size: 9.5px; line-height: 1.35; color: var(--text-3);
+    margin-top: 3px; min-height: 13px;
+  }
+  .sm-cross b { color: var(--cross); font-weight: 650; }
+
+  /* Workload cards */
+  .group-cards { display: flex; flex-direction: column; gap: 18px; }
+  .wl-card { }
+  .wl-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+  .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
+  .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .chart-box { min-width: 0; }
+  .chart-box .ct {
+    font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .chart-box .ct .hint { font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .chart-wrap { position: relative; height: 220px; }
+  .wl-cross {
+    grid-column: 1 / -1; margin-top: 2px; font-size: 12px;
+    color: var(--text-2); border-top: 1px dashed var(--border);
+    padding-top: 12px; display: flex; align-items: center; gap: 7px;
+  }
+  .wl-cross .lab {
+    font-size: 10px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-3);
+  }
+  .wl-cross b { color: var(--cross); font-weight: 650; }
+
+  /* Legend */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  .legend-item {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); background: var(--card);
+    padding: 6px 12px 6px 10px; border-radius: 999px; cursor: pointer;
+    font-size: 13px; font-weight: 550; color: var(--text); user-select: none;
+    transition: all .14s;
+  }
+  .legend-item:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+  .legend-item .dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+  .legend-item.off { opacity: .42; }
+  .legend-item.off .dot { box-shadow: inset 0 0 0 2px var(--text-3); background: transparent !important; }
+
+  .mem-wrap { position: relative; height: 280px; }
+
+  .footer-note {
+    margin-top: 14px; font-size: 12px; color: var(--text-3);
+    border-top: 1px dashed var(--border); padding-top: 14px;
+  }
+
+  @media (max-width: 1080px) {
+    .sm-grid { grid-template-columns: repeat(5, 1fr); }
+    .sm-cell { padding: 0 8px; }
+  }
+  @media (max-width: 980px) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .chart-pair { grid-template-columns: 1fr; }
+    .kpis { flex-direction: row; flex-wrap: wrap; }
+    .kpi { min-width: 160px; }
+    .sm-grid { grid-template-columns: repeat(3, 1fr); row-gap: 22px; }
+    .sm-cell:nth-child(3n+1) { border-left: none; padding-left: 0; }
+  }
+  @media (max-width: 860px) {
+    .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 9px 14px; }
+    .brand .wordmark { display: none; }
+    .topnav { gap: 2px; padding: 3px; }
+    .topnav a { padding: 5px 9px; font-size: 12px; }
+    .metastrip { padding: 9px 14px; }
+  }
+  @media (max-width: 760px) {
+    .sidebar { display: none; }
+    main { padding: 20px 16px 60px; }
+    .sm-grid { grid-template-columns: repeat(2, 1fr); }
+    .sm-cell:nth-child(2n+1) { border-left: none; padding-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html" title="Home">
+    <img src="/*__LOGO__*/" alt="Laravel Octane Benchmark" class="brand-logo" />
+    <span class="wordmark">Laravel Octane Benchmark</span>
+  </a>
+  <nav class="topnav" id="topnav">
+    <a href="index.html" data-nav="compare" class="active">Compare</a>
+    <a href="swoole.html" data-nav="swoole">Swoole</a>
+    <a href="roadrunner.html" data-nav="roadrunner">RoadRunner</a>
+    <a href="frankenphp.html" data-nav="frankenphp">FrankenPHP</a>
+  </nav>
+  <div class="topbar-right">
+    <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">&#127769;</button>
+  </div>
+</header>
+
+<div class="metastrip">
+  <div class="pills" id="manifestPills"></div>
+</div>
+
+<div class="shell">
+  <nav class="sidebar" id="sidebar">
+    <div class="nav-label">Navigate</div>
+    <a href="#summary" class="active"><span class="ico">&#9703;</span> Summary</a>
+    <a href="#overview"><span class="ico">&#9783;</span> Overview</a>
+    <a href="#overhead"><span class="ico">&#9889;</span> Overhead</a>
+    <a href="#cpu"><span class="ico">&#9638;</span> CPU</a>
+    <a href="#io"><span class="ico">&#8644;</span> I/O</a>
+    <a href="#memory"><span class="ico">&#9636;</span> Memory</a>
+  </nav>
+
+  <main>
+    <!-- SUMMARY: winner heatmap + KPI cards -->
+    <section id="summary">
+      <div class="sec-head">
+        <h2>Summary</h2>
+        <p>Lowest-p99 winner per workload &amp; concurrency, with headline stats. All comparisons are relative on identical hardware.</p>
+      </div>
+      <div class="hero-grid">
+        <div class="card">
+          <div class="card-title">Winner heatmap &mdash; lowest p99 latency</div>
+          <div class="card-sub">Each cell shows the server with the lowest median p99 at that concurrency.</div>
+          <table class="heatmap" id="heatmap"></table>
+        </div>
+        <div class="kpis" id="kpis"></div>
+      </div>
+      <div style="margin-top:20px;">
+        <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    <!-- OVERVIEW: small-multiples grid (grafted from D) -->
+    <section id="overview">
+      <div class="sec-head">
+        <h2>Overview</h2>
+        <p>Every workload's curves side by side &mdash; p99 latency then throughput across concurrency, grouped by overhead / CPU / I/O so all crossovers scan in one glance.</p>
+      </div>
+      <div class="card sm-card">
+        <div class="sm-block">
+          <div class="sm-block-label">p99 latency vs concurrency <span class="hint">lower is better &darr; &middot; shared per-panel scale</span></div>
+          <div class="sm-grid" id="smLatency"></div>
+        </div>
+        <div class="sm-block">
+          <div class="sm-block-label">Throughput vs concurrency <span class="hint">higher is better &uarr;</span></div>
+          <div class="sm-grid" id="smRps"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GROUP SECTIONS injected here -->
+    <div id="groupSections"></div>
+
+    <!-- MEMORY -->
+    <section id="memory">
+      <div class="sec-head">
+        <h2>Memory</h2>
+        <p>Peak resident set size (RSS) per server &mdash; the max observed across all workloads.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Peak RSS per server</div>
+        <div class="card-sub">Lower is better. Persistent workers (Octane) carry the framework in memory; FPM forks per request.</div>
+        <div class="mem-wrap"><canvas id="memChart"></canvas></div>
+        <div class="footer-note" id="memNote"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ===== DATA (injected by build step) ===== */
+const DATA = /*__DATA__*/;
+
+/* ===== CONSTANTS ===== */
+const COLORS = {
+  swoole: "#4ade80", openswoole: "#22d3ee", roadrunner: "#f59e0b",
+  frankenphp: "#a78bfa", fpm: "#f87171"
+};
+const SRV_LABEL = {
+  swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
+  frankenphp: "FrankenPHP", fpm: "PHP-FPM"
+};
+const WL_DESC = {
+  hello: "Bare route — pure framework + server overhead",
+  hash: "bcrypt password hashing (cost-bound CPU)",
+  mandelbrot: "Tight numeric loop (heavy CPU)",
+  json: "Large JSON encode/decode (CPU)",
+  db: "Single indexed SELECT (I/O-bound)"
+};
+
+const srvLabel = (s) => SRV_LABEL[s] || s;
+const cell = (s, w, c) => DATA.cells.find(x => x.server === s && x.workload === w && x.concurrency === c);
+
+/* group lookup helpers */
+const GROUP_OF = {};
+const GROUP_START = {};
+(DATA.groups || []).forEach(g => {
+  (g.workloads || []).forEach((w, i) => {
+    GROUP_OF[w] = g.label;
+    if (i === 0) GROUP_START[w] = true;
+  });
+});
+
+/* hidden-server state shared across charts */
+const hidden = new Set();
+const charts = [];        /* per-group server line charts (legend-toggleable) */
+const overviewCharts = []; /* small-multiples charts (also legend-toggleable) */
+
+/* ===== CROSSOVER HELPERS (grafted from B) ===== */
+function leaderAt(w, c, metric, lower) {
+  let best = null, bv = lower ? Infinity : -Infinity;
+  DATA.servers.forEach(s => {
+    const cc = cell(s, w, c); if (!cc) return;
+    const v = cc[metric]; if (v == null) return;
+    if (lower ? v < bv : v > bv) { bv = v; best = s; }
+  });
+  return best;
+}
+/* short one-liner: lead flips between smallest and largest concurrency */
+function crossoverCaption(w, metric, lower) {
+  const cs = DATA.concurrencies;
+  if (!cs || !cs.length) return "";
+  const cMin = cs[0], cMax = cs[cs.length - 1];
+  const a = leaderAt(w, cMin, metric, lower);
+  const b = leaderAt(w, cMax, metric, lower);
+  if (!a && !b) return "";
+  if (!a || !b) {
+    const only = a || b;
+    return `<b>${srvLabel(only)}</b> leads across the sweep.`;
+  }
+  if (a === b) return `<b>${srvLabel(a)}</b> leads across the sweep.`;
+  return `Lead flips: <b>${srvLabel(a)}</b> at c${cMin} &rarr; <b>${srvLabel(b)}</b> at c${cMax}.`;
+}
+
+/* ===== TOP BAR PILLS ===== */
+function renderPills() {
+  const m = DATA.manifest || {};
+  const el = document.getElementById('manifestPills');
+  const items = [
+    ['PHP', m.php], ['Laravel', m.laravel], ['Octane', m.octane],
+    ['Workers', m.workers], ['Caps', m.caps], ['Commit', m.commit], ['Host', m.host]
+  ].filter(([k, v]) => v != null);
+  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${v}</b></span>`).join('');
+  if (m.generator_isolated === false) {
+    html += `<span class="pill warn" title="Load generator shared CPU with the app">&#9888; co-resident generator</span>`;
+  } else if (m.generator_isolated === true) {
+    html += `<span class="pill" title="Generator isolated">&#10003; isolated generator</span>`;
+  }
+  html += `<span class="pill info" title="All numbers are relative comparisons on identical hardware — not absolute production figures">&#9432; relative-only</span>`;
+  el.innerHTML = html;
+}
+
+/* ===== HEATMAP ===== */
+function renderHeatmap() {
+  const t = document.getElementById('heatmap');
+  let head = '<thead><tr><th class="rowhdr">Workload</th>';
+  DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
+  head += '</tr></thead>';
+  let body = '<tbody>';
+  DATA.workloads.forEach(w => {
+    const desc = (WL_DESC[w] || '').split('—')[0].split('(')[0].trim();
+    body += `<tr><td class="rowhdr">${w}<small>${desc}</small></td>`;
+    DATA.concurrencies.forEach(c => {
+      let best = null, bestv = Infinity;
+      DATA.servers.forEach(s => {
+        const cc = cell(s, w, c);
+        if (cc && cc.p99_median != null && cc.p99_median < bestv) { bestv = cc.p99_median; best = s; }
+      });
+      if (best == null) {
+        body += `<td><span class="hpill" style="background:var(--pill-bg);color:var(--text-3)">&mdash;</span></td>`;
+      } else {
+        body += `<td><span class="hpill" style="background:${COLORS[best]}">${srvLabel(best)}<small>${bestv} ms</small></span></td>`;
+      }
+    });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  t.innerHTML = head + body;
+}
+
+/* ===== KPIs ===== */
+function renderKpis() {
+  let lp = { v: Infinity, s: null, w: null, c: null };
+  let bt = { v: -Infinity, s: null, w: null, c: null };
+  DATA.cells.forEach(cc => {
+    if (cc.p99_median != null && cc.p99_median < lp.v) lp = { v: cc.p99_median, s: cc.server, w: cc.workload, c: cc.concurrency };
+    if (cc.rps_median != null && cc.rps_median > bt.v) bt = { v: cc.rps_median, s: cc.server, w: cc.workload, c: cc.concurrency };
+  });
+  const peakBy = {};
+  (DATA.rss || []).forEach(r => { peakBy[r.server] = Math.max(peakBy[r.server] || 0, r.peak_rss_mib); });
+  let lm = { v: Infinity, s: null };
+  Object.entries(peakBy).forEach(([s, v]) => { if (v < lm.v) lm = { v, s }; });
+
+  const srv = (s) => s ? `<span class="srv"><span class="swatch" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span>` : '';
+  const cards = [
+    { label: 'Lowest p99 overall', val: lp.s ? lp.v : '—', unit: lp.s ? 'ms' : '', s: lp.s, ctx: lp.s ? `${lp.w} · c${lp.c}` : '' },
+    { label: 'Best throughput', val: bt.s ? Math.round(bt.v).toLocaleString() : '—', unit: bt.s ? 'req/s' : '', s: bt.s, ctx: bt.s ? `${bt.w} · c${bt.c}` : '' },
+    { label: 'Lowest peak memory', val: lm.s ? lm.v : '—', unit: lm.s ? 'MiB' : '', s: lm.s, ctx: lm.s ? 'max RSS across runs' : '' }
+  ];
+  document.getElementById('kpis').innerHTML = cards.map(c => `
+    <div class="kpi">
+      <span class="label">${c.label}</span>
+      <span class="val">${c.val}<span class="unit">${c.unit}</span></span>
+      ${srv(c.s)}
+      <span style="font-size:11.5px;color:var(--text-3)">${c.ctx}</span>
+    </div>`).join('');
+}
+
+/* ===== LEGEND ===== */
+function renderLegend() {
+  const el = document.getElementById('legend');
+  el.innerHTML = DATA.servers.map(s =>
+    `<span class="legend-item${hidden.has(s) ? ' off' : ''}" data-srv="${s}"><span class="dot" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span>`
+  ).join('');
+  el.querySelectorAll('.legend-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const s = item.dataset.srv;
+      if (hidden.has(s)) { hidden.delete(s); item.classList.remove('off'); }
+      else { hidden.add(s); item.classList.add('off'); }
+      applyVisibility();
+    });
+  });
+}
+function applyVisibility() {
+  [...charts, ...overviewCharts].forEach(ch => {
+    if (!ch.config._serverChart) return;
+    ch.data.datasets.forEach(ds => {
+      if (ds._server) ds.hidden = hidden.has(ds._server);
+    });
+    ch.update();
+  });
+}
+
+/* ===== THEME-AWARE COLORS ===== */
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/* ===== OVERVIEW SMALL MULTIPLES (grafted from D) ===== */
+function buildSmallMultiple(canvas, w, metric, lower) {
+  const labels = DATA.concurrencies.map(String);
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  const datasets = DATA.servers.map(s => {
+    const data = DATA.concurrencies.map(c => { const cc = cell(s, w, c); return cc ? cc[metric] : null; });
+    return {
+      label: srvLabel(s), _server: s, data,
+      borderColor: COLORS[s], backgroundColor: COLORS[s],
+      borderWidth: 1.4, pointRadius: 1.6, pointHoverRadius: 3.5,
+      tension: .2, fill: false, spanGaps: true,
+      hidden: hidden.has(s)
+    };
+  });
+  const ch = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      layout: { padding: { top: 2, right: 3, bottom: 0, left: 0 } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cssVar('--card'), titleColor: cssVar('--text'),
+          bodyColor: cssVar('--text-2'), borderColor: cssVar('--border-strong'),
+          borderWidth: 1, padding: 8, cornerRadius: 7, boxPadding: 3,
+          titleFont: { size: 10 }, bodyFont: { size: 10 },
+          callbacks: {
+            title: (it) => `c = ${it[0].label}`,
+            label: (it) => {
+              if (it.parsed.y == null) return null;
+              const unit = (metric === 'rps_median') ? ' req/s' : ' ms';
+              const v = (metric === 'rps_median') ? Math.round(it.parsed.y).toLocaleString() : it.parsed.y;
+              return `${it.dataset.label}: ${v}${unit}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false, drawBorder: false },
+          ticks: { maxRotation: 0, autoSkip: false, padding: 3, color: tcol, font: { size: 8.5 } }
+        },
+        y: {
+          type: 'logarithmic',
+          grid: { color: grid, drawBorder: false, lineWidth: 1 },
+          ticks: {
+            color: tcol, font: { size: 8 }, padding: 3, maxTicksLimit: 4,
+            callback: (v) => {
+              if (metric === 'rps_median' && v >= 1000) return (v / 1000) + 'k';
+              return v;
+            }
+          }
+        }
+      }
+    }
+  });
+  ch.config._serverChart = true;
+  overviewCharts.push(ch);
+}
+
+function buildOverviewGrid(containerId, metric, lower) {
+  const cont = document.getElementById(containerId);
+  cont.innerHTML = '';
+  const axisLabel = (metric === 'rps_median') ? 'req/s · log' : 'p99 ms · log';
+  DATA.workloads.forEach(w => {
+    const cellEl = document.createElement('div');
+    cellEl.className = 'sm-cell' + (GROUP_START[w] ? ' grp-start' : '');
+    const tag = GROUP_START[w] ? (GROUP_OF[w] || '') : '';
+    cellEl.innerHTML =
+      `<span class="grp-tag">${tag}</span>` +
+      `<h4>${w}</h4>` +
+      `<div class="sm-canvas-box"><canvas></canvas></div>` +
+      `<div class="sm-axis-note">${axisLabel} &middot; c ${DATA.concurrencies[0]}&ndash;${DATA.concurrencies[DATA.concurrencies.length - 1]}</div>` +
+      `<div class="sm-cross">${crossoverCaption(w, metric, lower)}</div>`;
+    cont.appendChild(cellEl);
+    buildSmallMultiple(cellEl.querySelector('canvas'), w, metric, lower);
+  });
+}
+function renderOverview() {
+  overviewCharts.forEach(c => c.destroy());
+  overviewCharts.length = 0;
+  buildOverviewGrid('smLatency', 'p99_median', true);
+  buildOverviewGrid('smRps', 'rps_median', false);
+}
+
+/* ===== PER-GROUP LINE CHARTS ===== */
+function baseLineOptions(yTitle) {
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  return {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: cssVar('--card'),
+        titleColor: cssVar('--text'),
+        bodyColor: cssVar('--text-2'),
+        borderColor: cssVar('--border-strong'),
+        borderWidth: 1, padding: 10, cornerRadius: 8, boxPadding: 4,
+        usePointStyle: true,
+        callbacks: { labelPointStyle: () => ({ pointStyle: 'circle' }) }
+      }
+    },
+    scales: {
+      x: { grid: { color: grid, drawBorder: false }, ticks: { color: tcol, font: { size: 11 } } },
+      y: {
+        grid: { color: grid, drawBorder: false },
+        ticks: { color: tcol, font: { size: 11 } },
+        title: { display: true, text: yTitle, color: tcol, font: { size: 11, weight: '600' } }
+      }
+    },
+    elements: { line: { tension: .3, borderWidth: 2.5 }, point: { radius: 3, hoverRadius: 5 } }
+  };
+}
+
+function makeWorkloadCharts(w, container) {
+  const labels = DATA.concurrencies.map(c => 'c' + c);
+
+  function leaderSeq(metric, lower) {
+    return DATA.concurrencies.map(c => leaderAt(w, c, metric, lower));
+  }
+
+  function build(metric, lower, yTitle, canvasId) {
+    const leaders = leaderSeq(metric, lower);
+    const crossX = new Set();
+    for (let i = 1; i < leaders.length; i++) if (leaders[i] && leaders[i] !== leaders[i - 1]) crossX.add(i);
+
+    const datasets = DATA.servers.map(s => {
+      const data = DATA.concurrencies.map(c => { const cc = cell(s, w, c); return cc ? cc[metric] : null; });
+      return {
+        label: srvLabel(s), _server: s, data,
+        borderColor: COLORS[s],
+        backgroundColor: COLORS[s] + '22',
+        spanGaps: true,
+        pointBackgroundColor: data.map((_, i) => crossX.has(i) ? '#fff' : COLORS[s]),
+        pointBorderColor: COLORS[s],
+        pointBorderWidth: data.map((_, i) => crossX.has(i) ? 3 : 1),
+        pointRadius: data.map((_, i) => crossX.has(i) ? 5.5 : 3),
+        pointHoverRadius: 6,
+        hidden: hidden.has(s)
+      };
+    });
+    const ctx = document.getElementById(canvasId);
+    const ch = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: baseLineOptions(yTitle) });
+    ch.config._serverChart = true;
+    charts.push(ch);
+  }
+
+  const idLat = `lat-${w}`, idRps = `rps-${w}`;
+  container.querySelector('.chart-pair').innerHTML = `
+    <div class="chart-box">
+      <div class="ct">p99 latency <span class="hint">lower is better &darr;</span></div>
+      <div class="chart-wrap"><canvas id="${idLat}"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
+      <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
+    </div>
+    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>`;
+  build('p99_median', true, 'ms', idLat);
+  build('rps_median', false, 'req/s', idRps);
+}
+
+/* ===== GROUP SECTIONS ===== */
+function renderGroups() {
+  const root = document.getElementById('groupSections');
+  DATA.groups.forEach(g => {
+    const sec = document.createElement('section');
+    sec.id = g.group;
+    sec.innerHTML = `
+      <div class="sec-head">
+        <h2>${g.label} <span class="badge-group">${g.workloads.length} workload${g.workloads.length > 1 ? 's' : ''}</span></h2>
+        <p>${groupBlurb(g.group)}</p>
+      </div>
+      <div class="group-cards"></div>`;
+    const wrap = sec.querySelector('.group-cards');
+    g.workloads.forEach(w => {
+      const card = document.createElement('div');
+      card.className = 'card wl-card';
+      card.innerHTML = `
+        <div class="wl-head">
+          <span class="name">${w}</span>
+          <span class="desc">${WL_DESC[w] || ''}</span>
+        </div>
+        <div class="chart-pair"></div>`;
+      wrap.appendChild(card);
+    });
+    root.appendChild(sec);
+    g.workloads.forEach((w, i) => makeWorkloadCharts(w, wrap.children[i]));
+  });
+}
+function groupBlurb(g) {
+  return {
+    overhead: 'Bare routes isolate raw server + framework overhead — the persistent-worker advantage shows clearly here.',
+    cpu: 'CPU-bound work narrows the field: all servers run the same PHP, so latency converges as compute dominates.',
+    io: 'A real database query — concurrency lets persistent workers overlap I/O waits that FPM serializes.'
+  }[g] || '';
+}
+
+/* ===== MEMORY CHART ===== */
+let memChart;
+function renderMemory() {
+  const peakBy = {};
+  (DATA.rss || []).forEach(r => { peakBy[r.server] = Math.max(peakBy[r.server] || 0, r.peak_rss_mib); });
+  const servers = DATA.servers.filter(s => peakBy[s] != null);
+  const vals = servers.map(s => peakBy[s]);
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  const ctx = document.getElementById('memChart');
+  memChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: servers.map(s => srvLabel(s)),
+      datasets: [{
+        label: 'Peak RSS (MiB)', data: vals,
+        backgroundColor: servers.map(s => COLORS[s]),
+        borderRadius: 7, barThickness: 30
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cssVar('--card'),
+          titleColor: cssVar('--text'),
+          bodyColor: cssVar('--text-2'),
+          borderColor: cssVar('--border-strong'),
+          borderWidth: 1, padding: 10, cornerRadius: 8,
+          callbacks: { label: c => ` ${c.parsed.x} MiB peak RSS` }
+        }
+      },
+      scales: {
+        x: { grid: { color: grid, drawBorder: false }, ticks: { color: tcol, font: { size: 11 } }, title: { display: true, text: 'MiB', color: tcol, font: { size: 11, weight: '600' } } },
+        y: { grid: { display: false, drawBorder: false }, ticks: { color: cssVar('--text'), font: { size: 12, weight: '600' } } }
+      }
+    }
+  });
+  const fpm = peakBy.fpm;
+  const octVals = DATA.servers.filter(s => s !== 'fpm' && peakBy[s] != null).map(s => peakBy[s]);
+  if (fpm != null && octVals.length) {
+    const maxOct = Math.max(...octVals);
+    document.getElementById('memNote').textContent =
+      `PHP-FPM peaks at ${fpm} MiB while persistent Octane workers reach up to ${maxOct} MiB — the memory cost of keeping the framework warm in exchange for lower latency and higher throughput.`;
+  } else {
+    document.getElementById('memNote').textContent =
+      'Peak resident memory per server across all workloads. Persistent workers carry the framework in memory.';
+  }
+}
+
+/* ===== THEME ===== */
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('themeToggle').innerHTML = t === 'dark' ? '&#9728;' : '&#127769;';
+  rebuildCharts();
+}
+function rebuildCharts() {
+  charts.forEach(c => c.destroy());
+  charts.length = 0;
+  document.getElementById('groupSections').innerHTML = '';
+  renderGroups();
+  renderOverview();
+  applyVisibility();
+  if (memChart) memChart.destroy();
+  renderMemory();
+}
+
+/* ===== SIDEBAR SCROLLSPY ===== */
+function initScrollSpy() {
+  const links = [...document.querySelectorAll('.sidebar a')];
+  const map = {};
+  links.forEach(l => { const id = l.getAttribute('href').slice(1); map[id] = l; });
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        if (map[e.target.id]) map[e.target.id].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+  document.querySelectorAll('main section').forEach(s => obs.observe(s));
+}
+
+/* ===== INIT ===== */
+renderPills();
+renderHeatmap();
+renderKpis();
+renderLegend();
+renderOverview();
+renderGroups();
+renderMemory();
+initScrollSpy();
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  setTheme(cur === 'dark' ? 'light' : 'dark');
+});
+</script>
+</body>
+</html>
