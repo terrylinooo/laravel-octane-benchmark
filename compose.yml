@@ -1,0 +1,193 @@
+name: laravel-octane-benchmark
+
+# Five PHP application servers running the *same* Laravel app for benchmarking,
+# plus a MySQL backend and a pinned wrk load generator. The harness (benchmark.sh)
+# runs ONE app server at a time; this file just declares them all.
+#
+#   swoole      -> http://localhost:18001
+#   openswoole  -> http://localhost:18002   (Octane's "swoole" driver also drives openswoole)
+#   roadrunner  -> http://localhost:18003
+#   frankenphp  -> http://localhost:18004
+#   fpm+nginx   -> http://localhost:18005   (control group, NOT Octane)
+#
+# Host ports are for manual curl only; the harness itself talks to servers over the
+# internal Docker network (http://<service>:8000), so it needs no host ports. The
+# 18000+ range avoids colliding with other local dev containers.
+#
+# Fairness knobs (held identical across every server):
+#   * 8 workers each (FPM pm=static max_children=8)
+#   * cpus=4 + cpuset=0-3  -> the "system under test" gets exactly 4 physical cores
+#   * mem_limit=512m
+#   * wrk pinned to cores 4-7 so the load generator never steals the server's CPU
+#   * opcache parity, APP_ENV=production, SESSION_DRIVER=array (stateless endpoints)
+
+x-octane: &octane
+  working_dir: /var/www/html
+  restart: unless-stopped
+  cpus: 4
+  cpuset: "0-3"
+  mem_limit: 512m
+  volumes:
+    - ./:/var/www/html
+  environment: &octane-env
+    APP_ENV: production
+    APP_DEBUG: "false"
+    LOG_CHANNEL: stderr
+    # Stateless endpoints: the default `database` session driver writes a row per
+    # request and serializes everything on the DB write lock, skewing all servers.
+    SESSION_DRIVER: array
+    # DB workload backend (/bench/db). Other workloads never touch the DB.
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    DB_DATABASE: bench
+    DB_USERNAME: bench
+    DB_PASSWORD: bench
+    # Calibration knobs for the cpu-group workloads: /bench/hash (sha256 rounds),
+    # /bench/mandelbrot (grid repeats), /bench/json (encode+decode round-trips).
+    BENCH_HASH_ITERATIONS: "${BENCH_HASH_ITERATIONS:-2000}"
+    BENCH_MANDELBROT_REPEAT: "${BENCH_MANDELBROT_REPEAT:-1}"
+    BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-1000}"
+  healthcheck:
+    test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/bench/hello')!==false?0:1);"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
+
+services:
+  swoole:
+    <<: *octane
+    image: ghcr.io/airygen/php:8.4-swoole-1.0.0
+    ports:
+      - "18001:8000"
+    environment:
+      <<: *octane-env
+      OCTANE_SERVER: swoole
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+
+  openswoole:
+    <<: *octane
+    image: ghcr.io/airygen/php:8.4-openswoole-1.0.0
+    ports:
+      - "18002:8000"
+    environment:
+      <<: *octane-env
+      OCTANE_SERVER: swoole
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+
+  roadrunner:
+    <<: *octane
+    image: ghcr.io/airygen/php:8.4-roadrunner-1.0.0
+    ports:
+      - "18003:8000"
+    environment:
+      <<: *octane-env
+      OCTANE_SERVER: roadrunner
+    command: ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rpc-port=6001", "--workers=8"]
+
+  frankenphp:
+    <<: *octane
+    image: ghcr.io/airygen/php:8.4-frankenphp-1.0.0
+    ports:
+      - "18004:8000"
+    environment:
+      <<: *octane-env
+      OCTANE_SERVER: frankenphp
+    command: ["php", "artisan", "octane:start", "--server=frankenphp", "--host=0.0.0.0", "--port=8000", "--workers=8"]
+
+  # --- Control group: traditional PHP-FPM + nginx (NOT Octane) ----------------
+  # FPM boots the framework per request, so it's the baseline. FPM speaks FastCGI
+  # only, so nginx fronts it for HTTP. The fpm+nginx pair shares cores 0-3 = the
+  # same 4-core budget every Octane server gets.
+  fpm:
+    image: ghcr.io/airygen/php:8.4-fpm-1.0.0
+    working_dir: /var/www/html
+    restart: unless-stopped
+    cpus: 4
+    cpuset: "0-3"
+    mem_limit: 512m
+    volumes:
+      - ./:/var/www/html
+      - ./docker/fpm/pool.conf:/usr/local/etc/php-fpm.d/zz-benchmark.conf:ro
+      - ./docker/fpm/opcache.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      LOG_CHANNEL: stderr
+      SESSION_DRIVER: array
+      OCTANE_SERVER: fpm
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: bench
+      DB_USERNAME: bench
+      DB_PASSWORD: bench
+      BENCH_HASH_ITERATIONS: "${BENCH_HASH_ITERATIONS:-2000}"
+      BENCH_MANDELBROT_REPEAT: "${BENCH_MANDELBROT_REPEAT:-1}"
+      BENCH_JSON_ITERATIONS: "${BENCH_JSON_ITERATIONS:-1000}"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    cpuset: "0-3"
+    mem_limit: 128m
+    depends_on:
+      fpm:
+        condition: service_healthy
+    ports:
+      - "18005:8000"
+    volumes:
+      - ./:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/bench/hello"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # --- DB backend for the /bench/db workload ----------------------------------
+  # Shares cores 0-3 with the app server during the db workload (realistic single
+  # box). Idle for all other workloads.
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    cpuset: "0-3"
+    mem_limit: 512m
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: bench
+      MYSQL_USER: bench
+      MYSQL_PASSWORD: bench
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # --- Load generator (pinned to the OTHER 4 cores) ---------------------------
+  # Profiled so it never starts on `docker compose up`. The harness invokes it
+  # with `docker compose run --rm wrk ...`. The Lua reporter emits one JSON line
+  # prefixed with __WRKJSON__ so the harness can parse percentiles + errors.
+  wrk:
+    build:
+      context: ./docker/wrk
+    image: octane-bench/wrk:latest
+    cpuset: "4-7"
+    mem_limit: 256m
+    profiles: ["tools"]
+    # Joins the default project network; targets app servers by service name
+    # (e.g. http://swoole:8000, http://nginx:8000).
+
+volumes:
+  mysql-data:
