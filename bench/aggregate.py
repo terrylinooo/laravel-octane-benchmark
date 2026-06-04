@@ -78,7 +78,7 @@ GROUP_LABEL = {"overhead": "Overhead", "cpu": "CPU-bound", "io": "I/O"}
 # The three featured Octane servers that get a dedicated per-server report page
 # (linked from the header menu). OpenSwoole shares Swoole's driver and FPM is the
 # control, so they appear in the comparison but not as standalone reports.
-FEATURED_SERVERS = ["swoole", "roadrunner", "frankenphp"]
+FEATURED_SERVERS = ["swoole", "openswoole", "roadrunner", "frankenphp"]
 
 
 def logo_data_uri():
