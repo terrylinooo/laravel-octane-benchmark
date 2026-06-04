@@ -53,13 +53,25 @@ wait_healthy(){
   return 1
 }
 
-# echoes "rss shmem working_set usage" in MiB for the given service's container
+# echoes "rss shmem working_set usage" in MiB for the given service's container.
+# Reads cgroup v2 (memory.stat anon/shmem + memory.current) when present, else v1
+# (memory.stat total_rss/total_shmem + memory.usage_in_bytes) — so this works on
+# the cgroup-v2 GitHub Actions runner and on cgroup-v1 hosts (WSL2 etc.) alike.
 read_ws_mib(){
-  local svc="$1" stat rss shmem usage
-  stat=$(dc exec -T "$svc" cat /sys/fs/cgroup/memory/memory.stat 2>/dev/null | tr -d '\r')
-  rss=$(awk '/^total_rss /{print $2}'   <<<"$stat")
-  shmem=$(awk '/^total_shmem /{print $2}' <<<"$stat")
-  usage=$(dc exec -T "$svc" cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -d '\r')
+  local svc="$1" rss shmem usage
+  read -r rss shmem usage < <(dc exec -T "$svc" sh <<'INNER' 2>/dev/null | tr -d '\r'
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  a=$(grep -m1 '^anon '  /sys/fs/cgroup/memory.stat | tr -dc '0-9')
+  s=$(grep -m1 '^shmem ' /sys/fs/cgroup/memory.stat | tr -dc '0-9')
+  u=$(cat /sys/fs/cgroup/memory.current 2>/dev/null | tr -dc '0-9')
+else
+  a=$(grep -m1 '^total_rss '   /sys/fs/cgroup/memory/memory.stat | tr -dc '0-9')
+  s=$(grep -m1 '^total_shmem ' /sys/fs/cgroup/memory/memory.stat | tr -dc '0-9')
+  u=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | tr -dc '0-9')
+fi
+echo "${a:-0} ${s:-0} ${u:-0}"
+INNER
+)
   rss=${rss:-0}; shmem=${shmem:-0}; usage=${usage:-0}
   echo "$((rss/1048576)) $((shmem/1048576)) $(((rss+shmem)/1048576)) $((usage/1048576))"
 }

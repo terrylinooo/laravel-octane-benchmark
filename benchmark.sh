@@ -11,7 +11,7 @@
 #     cores 4-7 don't exist and wrk shares 0-3 with the SUT (co-resident). The
 #     harness auto-detects this (nproc) and records generator_isolated per cell.
 #   * latency percentiles (p50/p99) from wrk are the headline metric
-#   * peak RSS (cgroup v1 memory.max_usage_in_bytes) is captured per (server,workload)
+#   * peak RSS (cgroup high-water mark, v2 memory.peak or v1 max_usage_in_bytes) per cell
 #   * cells with wrk errors are recorded so bad cells can't masquerade as clean
 #
 # Resumable: a cell whose JSON already exists is skipped, so a crash mid-matrix
@@ -51,6 +51,29 @@ first_core="${WRK_CPUSET%%[-,]*}"
 if [ "${first_core:-0}" -ge 4 ] 2>/dev/null; then GEN_ISOLATED=true; else GEN_ISOLATED=false; fi
 
 dc() { docker compose "$@"; }
+
+# ---- cgroup reads inside a container (v2 unified vs v1 legacy paths) -----------
+# The default GitHub Actions ubuntu-24.04 runner is cgroup v2 (no /sys/fs/cgroup/
+# memory/ or /cpuset/ dirs); WSL2 etc. are still v1. Detect via cgroup.controllers
+# and read the right path, so peak RSS and the pinning self-check work on both.
+read_cpuset() {   # $1=service -> effective cpuset string (e.g. "0-3")
+  dc exec -T "$1" sh <<'INNER' 2>/dev/null | tr -d '\r\n'
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null
+else
+  cat /sys/fs/cgroup/cpuset/cpuset.cpus 2>/dev/null
+fi
+INNER
+}
+read_peak_rss() { # $1=service -> peak RSS in bytes (v2 memory.peak; current as fallback)
+  dc exec -T "$1" sh <<'INNER' 2>/dev/null | tr -dc '0-9'
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory.current 2>/dev/null
+else
+  cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null
+fi
+INNER
+}
 
 # ---- server -> target host : services to start : container to measure RSS -----
 server_target()  { case "$1" in fpm) echo nginx;; *) echo "$1";; esac; }
@@ -170,7 +193,7 @@ for server in $SERVERS; do
       dc stop $svcs >/dev/null 2>&1; continue
     fi
     # pinning self-check on the measured container
-    cpuset=$(dc exec -T "$measure" cat /sys/fs/cgroup/cpuset/cpuset.cpus 2>/dev/null | tr -d '\r')
+    cpuset=$(read_cpuset "$measure")
     pinning="unverified"; [ "$cpuset" = "0-3" ] && pinning="verified"
     [ "$pinning" = "unverified" ] && echo "     ! cpuset='$cpuset' (expected 0-3) — results tagged pinning=unverified"
     # warm (discarded)
@@ -181,8 +204,8 @@ for server in $SERVERS; do
         run_cell "$server" "$workload" "$conc" "$run" "$target" "$pinning"
       done
     done
-    # peak RSS for this (server,workload) — cgroup v1 high-water mark
-    rss=$(dc exec -T "$measure" cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null | tr -d '\r')
+    # peak RSS for this (server,workload) — cgroup high-water mark (v2 or v1)
+    rss=$(read_peak_rss "$measure")
     jq -n --arg server "$server" --arg workload "$workload" --argjson bytes "${rss:-0}" --arg pinning "$pinning" \
       '{server:$server, workload:$workload, peak_rss_bytes:$bytes, peak_rss_mib:(($bytes/1048576)|floor), pinning:$pinning}' \
       > "$RESULTS_DIR/${server}_${workload}_rss.json"
