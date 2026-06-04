@@ -18,7 +18,11 @@ explicitly "it depends — here's exactly how it depends. Go run it yourself."
 ## Results
 
 Run it and open `docs/index.html` (charts) / `RESULTS.md` (tables). A published run
-is deployed to GitHub Pages (Settings → Pages → Source: GitHub Actions).
+is deployed to GitHub Pages (Settings → Pages → Source: GitHub Actions). The site is a
+small multi-page dashboard: a **Compare** page (winner heatmap, per-workload p99 +
+throughput curves with data tables, peak RSS) plus a **per-server deep-report** page for
+each Octane server (Swoole / OpenSwoole / RoadRunner / FrankenPHP), with a **worker-count
+toggle** to switch the whole view between the swept worker counts.
 
 These are **single-machine** results. Read them as **relative** (which server wins, and
 at what concurrency the winner flips), not as absolute numbers for your hardware.
@@ -30,10 +34,10 @@ servers actually diverge; mean throughput is often within noise. Throughput (req
 reported alongside. **Peak RSS** (memory high-water mark) is a secondary "VPS sizing"
 metric. CPU% is deliberately *not* a headline — cgroup CPU sampling is too noisy to cite.
 
-Each cell = `{server, workload, concurrency, run}` and is stored as one JSON file in
-`results/` with an embedded manifest (pinned versions, caps, commit SHA, host, wrk flags)
-so any data point is reproducible. Cells that recorded wrk errors (non-2xx / timeouts)
-are flagged, never silently averaged in.
+Each cell = `{server, workload, workers, concurrency, run}` and is stored as one JSON file
+in `results/` with an embedded manifest (pinned versions, caps, commit SHA, host, wrk
+flags) so any data point is reproducible. Cells that recorded wrk errors (non-2xx /
+timeouts) are flagged, never silently averaged in.
 
 ## Fairness controls (held identical for every server)
 
@@ -85,19 +89,16 @@ behavior,"** not an isolated raw-query measurement. It's labeled as such on the 
 `ubuntu-24.04`, builds the report, and uploads `results/` + `docs/` as an artifact
 (set the `publish` input to deploy `docs/` to GitHub Pages). Inputs let you scale the matrix.
 
-**Locally** — **Prerequisite:** Docker (Compose v2).
+**Locally** — **Prerequisites:** Docker (Compose v2), and PHP 8.4 + Composer on the host
+for `make deps` (only `composer install` runs on the host; everything else is in Docker).
+A `Makefile` wraps the workflow — `make help` lists every target.
 
 ```bash
-# Full matrix (5 servers × 5 workloads × 5 concurrencies × 2 worker counts × 3 runs).
-# Resumable — a cell whose JSON exists is skipped, so a crash never restarts from zero.
-./benchmark.sh
+make setup     # one-time: .env + APP_KEY + composer install into vendor/
+make bench     # the full matrix  (= ./benchmark.sh; resumable — existing cells are skipped)
+make report    # build RESULTS.md + docs/ (Compare + per-server pages)  (= python3 bench/aggregate.py)
 
-# Build the tables + charts from results/.
-python3 bench/aggregate.py
-#   -> RESULTS.md, docs/summary.json, docs/index.html
-
-# Quick smoke run (a few minutes) to verify the pipeline end to end:
-SERVERS="swoole fpm" WORKLOADS="hello db" CONCURRENCIES=8 RUNS=1 DURATION=5 WARMUP=2 ./benchmark.sh
+make smoke     # quick end-to-end smoke run (a few minutes)
 ```
 
 Tunable via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `WORKER_COUNTS`, `RUNS`, `DURATION`, `WARMUP`,
@@ -109,17 +110,35 @@ saturated cell be measured rather than censored as errors.
 ## How it works
 
 ```
-benchmark.sh ── per (server, workload):
-  stop all app servers → start this one (+ mysql for db) → wait healthy
+benchmark.sh ── per worker count (split host: SUT = lower cores, wrk = upper cores):
+  set OCTANE_WORKERS + match the FPM pool, then per (server, workload):
+  stop all app servers → start this one (force-recreate; + mysql for db) → wait healthy
   → cpuset self-check (tags pinning=verified|unverified)
-  → warm (discarded) → sweep concurrency × runs via the pinned wrk container
-  → write results/{server}_{workload}_c{conc}_r{run}.json (+ embedded manifest)
-  → capture peak RSS (cgroup memory high-water mark) → stop → settle
-bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + docs/ (Chart.js)
+  → per concurrency: warm (discarded) → runs via the pinned wrk container (--timeout)
+  → write results/{server}_{workload}_w{workers}_c{conc}_r{run}.json (+ embedded manifest)
+  → capture peak RSS (cgroup v2 memory.peak / v1 high-water mark) → stop → settle
+bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + docs/ (Compare +
+  per-server pages, Chart.js, logo embedded)
 ```
 
 The `wrk` container runs a small Lua reporter (`docker/wrk/report.lua`) that emits one
 JSON line with full latency percentiles and per-class error counts.
+
+## Idle memory profiler
+
+A separate tool measures **how much RAM Octane keeps resident per worker** — the memory
+cost of keeping the framework warm — with no load:
+
+```bash
+./bench/mem-profile.sh        # boot each server at N workers (4/8/16/32), warm every
+                              # worker, read the container working set (cgroup rss+shmem,
+                              # so shared OPcache is counted once)
+python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
+```
+
+The fit separates the **fixed** framework/master/OPcache overhead from the **marginal**
+cost of one more worker. The naive `RSS / N` average is misleading — it falls as N grows
+only because the fixed cost is amortized, not because a worker got cheaper.
 
 ## Caveats
 
@@ -153,8 +172,12 @@ routes/web.php              # /bench/{hello,hash,mandelbrot,json,db} workloads
 compose.yml                 # 5 servers + mysql + pinned wrk (caps & cpuset here)
 docker/wrk/                 # wrk image + Lua JSON reporter
 docker/fpm/ , docker/nginx/ # FPM pool + opcache parity, nginx FastCGI front
-benchmark.sh               # the matrix harness
-bench/aggregate.py         # results → RESULTS.md + docs/ charts
+Makefile                    # container-first workflow (make help)
+benchmark.sh                # the matrix harness
+bench/aggregate.py          # results → RESULTS.md + docs/ (Compare + per-server pages)
+bench/dashboard_template.html , bench/server_template.html  # docs/ page templates
+bench/mem-profile.sh , bench/mem_profile.py  # idle per-worker memory profiler
 database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
+readmes/                    # README translations (10 languages)
 ```
