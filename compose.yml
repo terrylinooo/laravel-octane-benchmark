@@ -15,7 +15,8 @@ name: laravel-octane-benchmark
 # 18000+ range avoids colliding with other local dev containers.
 #
 # Fairness knobs (held identical across every server):
-#   * 8 workers each (FPM pm=static max_children=8)
+#   * workers = ~2 per SUT cpu (OCTANE_WORKERS; FPM pm=static, max_children matched
+#     by benchmark.sh) -> 4 on the 2-cpu runner, 8 on an 8-core host
 #   * SUT_CPUS + SUT_CPUSET -> the "system under test" gets the host's LOWER half of
 #     cores. benchmark.sh splits the host: SUT=2 cpus / cpuset 0-1 on the 4-core CI
 #     runner, SUT=4 / cpuset 0-3 on an 8-core host. Defaults here = the CI case.
@@ -73,7 +74,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: swoole
-    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-4}"]
 
   openswoole:
     <<: *octane
@@ -83,7 +84,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: swoole
-    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
+    command: ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-4}"]
 
   roadrunner:
     <<: *octane
@@ -93,7 +94,7 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: roadrunner
-    command: ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rpc-port=6001", "--workers=${OCTANE_WORKERS:-8}"]
+    command: ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rpc-port=6001", "--workers=${OCTANE_WORKERS:-4}"]
 
   frankenphp:
     <<: *octane
@@ -103,12 +104,12 @@ services:
     environment:
       <<: *octane-env
       OCTANE_SERVER: frankenphp
-    command: ["php", "artisan", "octane:start", "--server=frankenphp", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-8}"]
+    command: ["php", "artisan", "octane:start", "--server=frankenphp", "--host=0.0.0.0", "--port=8000", "--workers=${OCTANE_WORKERS:-4}"]
 
   # --- Control group: traditional PHP-FPM + nginx (NOT Octane) ----------------
   # FPM boots the framework per request, so it's the baseline. FPM speaks FastCGI
-  # only, so nginx fronts it for HTTP. The fpm+nginx pair shares cores 0-3 = the
-  # same 4-core budget every Octane server gets.
+  # only, so nginx fronts it for HTTP. The fpm+nginx pair shares the SUT cpuset =
+  # the same core budget every Octane server gets (pool.conf workers matched too).
   fpm:
     image: ghcr.io/airygen/php:8.4-fpm-1.0.0
     working_dir: /var/www/html

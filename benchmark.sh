@@ -9,7 +9,8 @@
 #     SUT's CPU). On the default 4-core GitHub Actions runner that's SUT=2 cpus
 #     (cpuset 0-1) + wrk=cpuset 2-3; on an 8-core host it's SUT 0-3 + wrk 4-7. The SUT
 #     cpu count is recorded in the manifest caps so reports are labelled honestly.
-#   * 8 workers everywhere, opcache + production parity
+#   * workers = ~2 per SUT cpu (4 on the 2-cpu runner, 8 on 8 cores), FPM matched
+#     via pool.conf; opcache + production parity
 #   * latency percentiles (p50/p99) from wrk are the headline metric
 #   * peak RSS (cgroup high-water mark, v2 memory.peak or v1 max_usage_in_bytes) per cell
 #   * cells with wrk errors are recorded so bad cells can't masquerade as clean
@@ -52,6 +53,10 @@ WRK_CPUSET="${WRK_CPUSET:-$HALF-$((NPROC - 1))}"
 export SUT_CPUS SUT_CPUSET WRK_CPUSET
 # Isolated whenever the two core sets differ (always, by construction of the split).
 GEN_ISOLATED=true; [ "$SUT_CPUSET" = "$WRK_CPUSET" ] && GEN_ISOLATED=false
+# Workers track the SUT's cores (Octane's ~2 workers/CPU): 4 on the 2-cpu CI runner,
+# 8 on an 8-core host. compose reads OCTANE_WORKERS; FPM is matched via pool.conf.
+OCTANE_WORKERS="${OCTANE_WORKERS:-$(( SUT_CPUS * 2 ))}"
+export OCTANE_WORKERS
 
 dc() { docker compose "$@"; }
 
@@ -127,7 +132,7 @@ build_manifest() {
     --arg php "${php_ver:-8.4.x}" --arg octane "${octane_ver:-?}" --arg laravel "${laravel_ver:-?}" \
     --arg commit "$commit" --arg host "$host" --arg nproc "$NPROC" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --argjson workers 8 \
+    --argjson workers "$OCTANE_WORKERS" \
     --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-8g}" \
     --arg wrk "wrk -t${THREADS} -d${DURATION}s --timeout ${TIMEOUT} --latency" \
     --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
@@ -165,7 +170,7 @@ run_cell() {
 echo "Servers:       $SERVERS"
 echo "Workloads:     $WORKLOADS"
 echo "Concurrencies: $CONCURRENCIES   Runs/cell: $RUNS   Duration: ${DURATION}s   Warmup: ${WARMUP}s"
-echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   generator_isolated=$GEN_ISOLATED"
+echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   workers=$OCTANE_WORKERS   generator_isolated=$GEN_ISOLATED"
 [ "$GEN_ISOLATED" = false ] && echo "  ! host too small to split — generator shares the SUT's cores (co-resident), relative-only."
 echo
 
@@ -180,6 +185,16 @@ MANIFEST=$(build_manifest)
 echo "==> Manifest: $(jq -c '{php,laravel,octane,commit,caps}' <<<"$MANIFEST")"
 echo
 
+# Match the FPM pool to OCTANE_WORKERS so the control group has the same worker
+# budget. Write into the bind-mounted pool.conf from a pristine copy via redirect
+# (preserves the inode — `sed -i` swaps it and breaks the Docker Desktop / WSL2
+# bind-mount snapshot); restore on exit. fpm is force-recreated in the loop so the
+# changed mount is re-snapshotted.
+POOL="docker/fpm/pool.conf"
+cp "$POOL" "$POOL.orig"
+trap 'mv -f "$POOL.orig" "$POOL" 2>/dev/null || true' EXIT
+sed "s/^pm.max_children = .*/pm.max_children = ${OCTANE_WORKERS}/" "$POOL.orig" > "$POOL"
+
 for server in $SERVERS; do
   target=$(server_target "$server"); svcs=$(server_services "$server"); measure=$(server_measure "$server")
   echo "################ $server  (target=$target) ################"
@@ -190,7 +205,9 @@ for server in $SERVERS; do
     fi
     echo "  -- $workload"
     dc stop $APP_SERVICES >/dev/null 2>&1
-    dc up -d $svcs >/dev/null 2>&1
+    # fpm: force-recreate so the worker-count pool.conf change is re-snapshotted.
+    if [ "$server" = fpm ]; then dc up -d --force-recreate $svcs >/dev/null 2>&1
+    else dc up -d $svcs >/dev/null 2>&1; fi
     if ! wait_healthy $svcs; then
       echo "     UNHEALTHY — skipping $server/$workload" >&2
       dc stop $svcs >/dev/null 2>&1; continue

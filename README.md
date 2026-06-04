@@ -39,7 +39,7 @@ are flagged, never silently averaged in.
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **8** everywhere (FPM `pm=static, max_children=8`) | same concurrency budget for every server |
+| Workers | **~2 per SUT cpu** (`OCTANE_WORKERS`; FPM `pm=static`, `max_children` matched) — 4 on the 2-cpu runner, 8 on 8 cores | Octane's guidance, same budget for every server (incl. the FPM control) |
 | CPU | **the host's lower half** — `cpus=2`, `cpuset=0-1` on the 4-core runner (`cpus=4`, `cpuset=0-3` on an 8-core host) | every server gets the same cores; the SUT cpu count is recorded in the manifest caps |
 | Load generator | **`wrk` on the host's upper half** (`cpuset=2-3` on the runner, `4-7` on 8 cores) — disjoint from the SUT | the generator is **always isolated**: it never steals the SUT's CPU. Recorded per-cell as `generator_isolated` |
 | Memory | `mem_limit=8g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |

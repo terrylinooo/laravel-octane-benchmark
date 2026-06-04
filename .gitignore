@@ -45,3 +45,6 @@ Thumbs.db
 # Python bytecode (bench/aggregate.py is pure stdlib; no build artifacts tracked).
 __pycache__/
 *.pyc
+
+# benchmark.sh / mem-profile.sh pristine backup of the FPM pool (restored on exit)
+docker/fpm/pool.conf.orig
