@@ -40,6 +40,10 @@ on:
 env:
   GITHUB_REGISTRY: ghcr.io
   GITHUB_USERNAME: ${{ github.actor }}
+  # Set repo secret GH_PAT (a PAT with read:packages) ONLY if the ghcr.io/airygen
+  # images are private. If you make those packages public, leave it unset and the
+  # login step below is skipped (anonymous pull works).
+  GH_PAT: ${{ secrets.GH_PAT }}
 
 jobs:
   benchmark:
@@ -66,14 +70,17 @@ jobs:
           php-version: "8.4"
           tools: composer
 
-      # The app images live under ghcr.io/airygen/* (private), so authenticate
-      # before docker compose pulls them.
+      # Authenticate to GHCR only when a PAT is provided (private packages). If
+      # GH_PAT is unset the step is skipped — public ghcr.io/airygen images pull
+      # anonymously, and an empty password would otherwise fail with
+      # "Error: Password required".
       - name: Login to GitHub Container Registry
+        if: ${{ env.GH_PAT != '' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.GITHUB_REGISTRY }}
           username: ${{ env.GITHUB_USERNAME }}
-          password: ${{ secrets.GH_PAT }}
+          password: ${{ env.GH_PAT }}
 
       - name: Cache PHP packages
         uses: actions/cache@v4
