@@ -14,6 +14,11 @@ Laravel Octane 애플리케이션 서버(**Swoole**, **OpenSwoole**, **RoadRunne
 **워크로드별 레이턴시 교차 곡선**을 발표합니다. 결론은 명시적으로 "상황에 따라 다르다 —
 정확히 어떻게 다른지 여기 있다. 직접 실행해 보라"입니다.
 
+가장 빠르다고 해서 곧 가장 좋은 것은 아닙니다. Swoole/OpenSwoole, RoadRunner, FrankenPHP는
+각각 장단점과 적합한 애플리케이션 형태가 다릅니다. 실제 선택에는 운영 모델, 생태계 지원,
+배포 방식, 확장 호환성, 팀의 익숙함도 함께 고려해야 합니다. 이 프로젝트는 그 선택을 결론내리려는
+것이 아니라, 공정하고 재현 가능한 환경에서 데이터를 만들어 공개하는 데만 집중합니다.
+
 ## Results
 
 실행한 뒤 `docs/index.html`(차트) / `RESULTS.md`(표)를 열어 보세요. 발표된 실행 결과는
@@ -83,6 +88,10 @@ RoadRunner vs FrankenPHP). 이 워크로드는 격리된 순수 쿼리 측정이
 기본 Octane DB 동작"**으로 범위가 한정됩니다. 차트에도 그렇게 표시됩니다.
 
 ## Run it
+
+이 프로젝트는 기본적으로 GitHub Actions runner에서 benchmark를 실행하고 리포트를 생성하도록
+구성되어 있습니다. 이 저장소의 workflow를 그대로 사용할 수도 있고, fork한 뒤 자신의 repo에서
+실행할 수도 있습니다. 직접 관리하는 로컬 머신이나 원격 머신에서 같은 harness를 실행할 수도 있습니다.
 
 **CI에서(기본값):** *Actions → Run workflow*를 통해 **Benchmark** 워크플로
 (`.github/workflows/benchmark.yml`)를 트리거하세요. `ubuntu-24.04`에서 실행되어 리포트를

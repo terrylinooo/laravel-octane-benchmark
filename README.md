@@ -2,179 +2,252 @@
 
 **English** · [繁體中文](readmes/README.zh-Hant.md) · [简体中文](readmes/README.zh-Hans.md) · [日本語](readmes/README.ja.md) · [한국어](readmes/README.ko.md) · [Español](readmes/README.es.md) · [Deutsch](readmes/README.de.md) · [Русский](readmes/README.ru.md) · [Italiano](readmes/README.it.md) · [Français](readmes/README.fr.md) · [Português](readmes/README.pt.md)
 
-A reproducible harness that benchmarks the Laravel Octane application servers
-(**Swoole**, **OpenSwoole**, **RoadRunner**, **FrankenPHP**) against a traditional
-**PHP-FPM + nginx** control group — and shows *where each one wins*.
+This project benchmarks Laravel Octane servers under the same conditions:
 
-Most Octane benchmarks publish a single "fastest" number and contradict each other,
-because they quietly differ on workload, worker count, load generator, and warm-vs-cold,
-and rarely disclose any of it. This one fixes every confounding variable, discloses all
-of them, and publishes **per-workload latency crossover curves**. The verdict is
-explicitly "it depends — here's exactly how it depends. Go run it yourself."
+- Swoole
+- OpenSwoole
+- RoadRunner
+- FrankenPHP
+- PHP-FPM + nginx as the traditional control group
+
+The goal is not to crown one server as "the fastest". Most Octane benchmarks end up
+arguing with each other because they use different workloads, worker counts, warm-up
+rules, and load generators. This repo tries to make those choices visible and repeatable,
+then shows where each server wins and where the result flips.
+
+In short: run the matrix, open the report, and compare the curves instead of trusting one
+headline number.
+
+Fastest also does not automatically mean best. Swoole/OpenSwoole, RoadRunner, and
+FrankenPHP each have their own trade-offs and fit different application shapes. Choosing
+between them involves operational model, ecosystem support, deployment style, extension
+compatibility, and team familiarity. This project does not try to settle that decision; it
+only runs the servers in a fair, repeatable environment and publishes the data.
 
 ## Results
 
-Run it and open `docs/index.html` (charts) / `RESULTS.md` (tables). A published run
-is deployed to GitHub Pages (Settings → Pages → Source: GitHub Actions). The site is a
-small multi-page dashboard: a **Compare** page (winner heatmap, per-workload p99 +
-throughput curves with data tables, peak RSS) plus a **per-server deep-report** page for
-each Octane server (Swoole / OpenSwoole / RoadRunner / FrankenPHP), with a **worker-count
-toggle** to switch the whole view between the swept worker counts.
+After a run, open:
 
-These are **single-machine** results. Read them as **relative** (which server wins, and
-at what concurrency the winner flips), not as absolute numbers for your hardware.
+- `docs/index.html` for the dashboard
+- `RESULTS.md` for the tables
+- `results/*.json` for the raw per-cell data
 
-## What's measured
+The dashboard has a Compare page with winner heatmaps, p99 and throughput curves, data
+tables, and peak RSS. It also creates one deep-dive page per Octane server, with a worker
+count toggle so you can compare the same workload across different worker settings.
 
-**Headline: p99 / p50 latency across a concurrency sweep.** Tail latency is where these
-servers actually diverge; mean throughput is often within noise. Throughput (req/s) is
-reported alongside. **Peak RSS** (memory high-water mark) is a secondary "VPS sizing"
-metric. CPU% is deliberately *not* a headline — cgroup CPU sampling is too noisy to cite.
+These are single-machine results. Treat them as relative results: which server wins for a
+given workload and when the winner changes. Do not treat the raw numbers as something your
+own hardware will exactly match.
 
-Each cell = `{server, workload, workers, concurrency, run}` and is stored as one JSON file
-in `results/` with an embedded manifest (pinned versions, caps, commit SHA, host, wrk
-flags) so any data point is reproducible. Cells that recorded wrk errors (non-2xx /
-timeouts) are flagged, never silently averaged in.
+## What Gets Measured
 
-## Fairness controls (held identical for every server)
+The main metric is latency across a concurrency sweep, especially p99. Tail latency is
+usually where these servers start to separate. p50 and throughput are reported too, but
+throughput alone often hides the interesting part.
 
-| Control | Value | Why |
+Peak RSS is included as a practical memory signal for VPS sizing. CPU percentage is not a
+headline metric because cgroup CPU sampling is noisy enough to be misleading in this setup.
+
+Every result cell is one JSON file:
+
+```text
+results/{server}_{workload}_w{workers}_c{concurrency}_r{run}.json
+```
+
+Each file includes the workload, server, worker count, concurrency, run number, wrk output,
+and a manifest with pinned versions, resource caps, commit SHA, host data, and wrk flags.
+If wrk reports timeouts or non-2xx responses, the cell is flagged instead of silently mixed
+into clean results.
+
+## Fairness Rules
+
+The benchmark runs one app server at a time. Idle sibling containers are stopped, so the
+server under test is not competing with the others for CPU or memory.
+
+| Control | Value | Why it matters |
 |---|---|---|
-| Workers | **swept** (`WORKER_COUNTS`, default ~2/cpu and its ×2 → `4 8` on the 2-cpu runner); FPM `max_children` matched | a matrix dimension — see how each server scales with workers. Same count for every server (incl. the FPM control) per pass |
-| CPU | **the host's lower half** — `cpus=2`, `cpuset=0-1` on the 4-core runner (`cpus=4`, `cpuset=0-3` on an 8-core host) | every server gets the same cores; the SUT cpu count is recorded in the manifest caps |
-| Load generator | **`wrk` on the host's upper half** (`cpuset=2-3` on the runner, `4-7` on 8 cores) — disjoint from the SUT | the generator is **always isolated**: it never steals the SUT's CPU. Recorded per-cell as `generator_isolated` |
-| Memory | `mem_limit=4g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
-| OPcache | enabled, `validate_timestamps=0` | code compiled once, like Octane keeps it |
-| App env | `APP_ENV=production`, `APP_DEBUG=false` | production code paths |
-| Sessions | `SESSION_DRIVER=array` | stateless endpoints — nothing serializes on a write lock |
-| Versions | pinned: PHP 8.4, Laravel 13, Octane 2.17 (see manifest) | no moving parts |
+| Workers | Swept through `WORKER_COUNTS`; FPM `max_children` is matched | Worker count is part of the matrix, not a hidden constant. |
+| CPU | The server under test gets the lower half of the host cores | Every server gets the same CPU budget. |
+| Load generator | `wrk` runs on the upper half of the host cores | The load generator does not steal CPU from the server being measured. |
+| Memory | `MEM_LIMIT=4g` by default | The limit is equal and generous on the default runner, so memory pressure does not decide the winner. |
+| OPcache | Enabled with `validate_timestamps=0` | Code is compiled once, closer to a warm production setup. |
+| App env | `APP_ENV=production`, `APP_DEBUG=false` | Benchmarks production code paths. |
+| Sessions | `SESSION_DRIVER=array` | Stateless routes avoid session write locks. |
+| Versions | PHP 8.4, Laravel 13, Octane 2.17 | Versions are pinned and recorded in each manifest. |
 
-The harness runs **one app server at a time** (all others stopped) so its CPU/RAM are
-measured in isolation, not under contention from idle siblings.
+On the default GitHub Actions runner (`ubuntu-24.04`, 4 vCPU, 16 GB RAM), the script splits
+the host in half:
 
-**Default environment: a GitHub Actions `ubuntu-24.04` runner (4 vCPU / 16 GB RAM).**
-`benchmark.sh` **splits the host in half**: the SUT gets the lower cores, the `wrk`
-generator the upper cores, so the generator is **always isolated** (it never steals the
-SUT's CPU). On the 4-core runner that means the **SUT is 2 cpus** (`cpuset 0-1`) and `wrk`
-runs on `2-3`; on an 8-core host the SUT gets 4 cpus (`0-3`) and `wrk` `4-7`. The trade-off
-is the SUT only gets **half the box** — so on the default runner reports are for a **2-cpu
-server**, recorded in the manifest caps (`cpus=2`). Because shared CI runners are still
-noisy neighbors, read the numbers as **relative-only**.
+- server under test: `cpuset 0-1`, so it behaves like a 2-cpu server
+- `wrk`: `cpuset 2-3`
+
+On an 8-core host, the same rule gives the server `0-3` and `wrk` `4-7`. This keeps the
+generator isolated, but it also means the server only gets half of the machine. Shared CI
+runners can still be noisy, so read the shape of the results more seriously than the exact
+numbers.
 
 ## Workloads
 
-Workloads are organized into three **groups** so the charts and tables read as
-"overhead → where the CPU goes → I/O". The three `cpu`-group routes each stress a
-*different* instruction path, so they can disagree on which server wins.
+The workloads are grouped so the charts move from framework overhead, to CPU-heavy routes,
+to I/O. The CPU routes intentionally stress different paths, so they may disagree on which
+server wins.
 
-| Group | Route | Isolates | Notes |
+| Group | Route | Focus | Notes |
 |---|---|---|---|
-| overhead | `/bench/hello` | routing + response overhead | fixed-length body |
-| cpu | `/bench/hash` | integer / bitwise | `sha256` chaining ×`BENCH_HASH_ITERATIONS` (calibrate so it ≫ hello) |
-| cpu | `/bench/mandelbrot` | float / FPU | escape-time Mandelbrot, `BENCH_MANDELBROT_DIM`²×4 grid, `…_MAX_ITER` cap, ×`…_REPEAT` (~30ms default) |
-| cpu | `/bench/json` | serialization (codec) | `json_encode`+`json_decode` round-trip of a 1000-int array ×`BENCH_JSON_ITERATIONS` (codec dominates, not routing; ~20ms default) |
-| io | `/bench/db` | a real query | indexed PK `SELECT` vs **MySQL 8** |
+| overhead | `/bench/hello` | routing and response overhead | Fixed-size response body. |
+| cpu | `/bench/hash` | integer and bitwise work | Repeated SHA-256 chaining via `BENCH_HASH_ITERATIONS`. |
+| cpu | `/bench/mandelbrot` | floating-point work | Mandelbrot escape-time calculation with tunable size, max iterations, and repeat count. |
+| cpu | `/bench/json` | JSON codec work | `json_encode` and `json_decode` round trips over a 1000-int array. |
+| io | `/bench/db` | real database query | Indexed primary-key `SELECT` against MySQL 8. |
 
-**`/bench/db` caveat:** servers differ in connection handling (Swoole coroutine pool vs
-RoadRunner vs FrankenPHP). This workload is scoped as **"each server's default Octane DB
-behavior,"** not an isolated raw-query measurement. It's labeled as such on the chart.
+The `/bench/db` route measures each server's default Octane database behavior. It is not a
+raw query micro-benchmark. That distinction matters because Swoole, RoadRunner, and
+FrankenPHP handle connections differently.
 
-## Run it
+## Run It
 
-**In CI (the default):** trigger the **Benchmark** workflow
-(`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. It runs on
-`ubuntu-24.04`, builds the report, and uploads `results/` + `docs/` as an artifact
-(set the `publish` input to deploy `docs/` to GitHub Pages). Inputs let you scale the matrix.
+This repo is set up to generate benchmark reports on a GitHub Actions runner by default.
+You can run it as-is from this repository, fork it and run the workflow in your own repo,
+or run the same harness on a local or remote machine when you want hardware you control.
 
-**Locally** — **Prerequisites:** Docker (Compose v2), and PHP 8.4 + Composer on the host
-for `make deps` (only `composer install` runs on the host; everything else is in Docker).
-A `Makefile` wraps the workflow — `make help` lists every target.
+### GitHub Actions
 
-```bash
-make setup     # one-time: .env + APP_KEY + composer install into vendor/
-make bench     # the full matrix  (= ./benchmark.sh; resumable — existing cells are skipped)
-make report    # build RESULTS.md + docs/ (Compare + per-server pages)  (= python3 bench/aggregate.py)
+Use the **Benchmark** workflow in `.github/workflows/benchmark.yml`:
 
-make smoke     # quick end-to-end smoke run (a few minutes)
-```
+1. Open the Actions tab.
+2. Choose **Benchmark**.
+3. Click **Run workflow**.
 
-Tunable via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `WORKER_COUNTS`, `RUNS`, `DURATION`, `WARMUP`,
-`TIMEOUT`, `BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_DIM`, `BENCH_MANDELBROT_MAX_ITER`,
-`BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`. Each (server, workload) is warmed
-**at every concurrency** before its runs, and `wrk --timeout` (default 15s) lets a slow,
-saturated cell be measured rather than censored as errors.
+The workflow runs on `ubuntu-24.04`, builds `RESULTS.md` and `docs/`, then uploads
+`results/` and `docs/` as artifacts. Set the `publish` input if you want the generated
+dashboard deployed to GitHub Pages.
 
-## How it works
+### Local Machine
 
-```
-benchmark.sh ── per worker count (split host: SUT = lower cores, wrk = upper cores):
-  set OCTANE_WORKERS + match the FPM pool, then per (server, workload):
-  stop all app servers → start this one (force-recreate; + mysql for db) → wait healthy
-  → cpuset self-check (tags pinning=verified|unverified)
-  → per concurrency: warm (discarded) → runs via the pinned wrk container (--timeout)
-  → write results/{server}_{workload}_w{workers}_c{conc}_r{run}.json (+ embedded manifest)
-  → capture peak RSS (cgroup v2 memory.peak / v1 high-water mark) → stop → settle
-bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + docs/ (Compare +
-  per-server pages, Chart.js, logo embedded)
-```
+Prerequisites:
 
-The `wrk` container runs a small Lua reporter (`docker/wrk/report.lua`) that emits one
-JSON line with full latency percentiles and per-class error counts.
+- Docker with Compose v2
+- PHP 8.4 and Composer on the host
 
-## Idle memory profiler
-
-A separate tool measures **how much RAM Octane keeps resident per worker** — the memory
-cost of keeping the framework warm — with no load:
+Only `composer install` runs on the host. The app servers, MySQL, and wrk run in Docker.
 
 ```bash
-./bench/mem-profile.sh        # boot each server at N workers (4/8/16/32), warm every
-                              # worker, read the container working set (cgroup rss+shmem,
-                              # so shared OPcache is counted once)
-python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
+make setup   # one-time setup: .env, APP_KEY, and vendor/
+make bench   # full benchmark matrix; resumable because existing result cells are skipped
+make report  # rebuild RESULTS.md and docs/ from results/
 ```
 
-The fit separates the **fixed** framework/master/OPcache overhead from the **marginal**
-cost of one more worker. The naive `RSS / N` average is misleading — it falls as N grows
-only because the fixed cost is amortized, not because a worker got cheaper.
+For a quick end-to-end check:
+
+```bash
+make smoke
+```
+
+Useful environment variables:
+
+```text
+SERVERS
+WORKLOADS
+CONCURRENCIES
+WORKER_COUNTS
+RUNS
+DURATION
+WARMUP
+TIMEOUT
+MEM_LIMIT
+BENCH_HASH_ITERATIONS
+BENCH_MANDELBROT_DIM
+BENCH_MANDELBROT_MAX_ITER
+BENCH_MANDELBROT_REPEAT
+BENCH_JSON_ITERATIONS
+```
+
+Each server/workload pair is warmed at every concurrency before the measured runs. The
+default wrk timeout is 15 seconds, which lets slow saturated cells be recorded instead of
+disappearing as censored failures.
+
+## How The Harness Works
+
+```text
+benchmark.sh
+  for each worker count:
+    set Octane workers and match the FPM pool
+    for each server/workload:
+      stop the other app servers
+      start the selected server, plus MySQL for /bench/db
+      wait until the server is healthy
+      verify cpuset pinning when the host supports it
+      for each concurrency:
+        warm up
+        run wrk through the pinned wrk container
+        write one JSON result cell
+      capture peak RSS
+      stop the server and let the host settle
+
+bench/aggregate.py
+  read results/*.json
+  calculate medians and ranges
+  build RESULTS.md and docs/
+```
+
+The wrk container uses `docker/wrk/report.lua` to emit one JSON line with latency
+percentiles, request counts, throughput, and error classes.
+
+## Idle Memory Profile
+
+The benchmark also includes a separate memory profiler for the cost of keeping Octane
+workers warm with no active load.
+
+```bash
+./bench/mem-profile.sh
+python3 bench/mem_profile.py
+```
+
+The profiler boots each server with several worker counts, warms every worker, reads the
+container working set, then fits:
+
+```text
+working_set(N) = fixed + marginal * N
+```
+
+That split is more useful than `RSS / workers`, because average RSS per worker falls as
+the fixed framework and OPcache cost gets amortized.
 
 ## Caveats
 
-- **Single machine, relative not absolute.** Your numbers will differ; the *shape* (who
-  wins where) is the portable finding.
-- **Pinning self-check.** If the host doesn't honor `--cpuset-cpus`, every cell is tagged
-  `pinning=unverified` and the result is not presented as generator-isolated.
-- **2-cpu SUT on the 4-core runner.** To keep the generator isolated, the host is split
-  in half — so on the default runner each server is a **2-cpu** server (the other 2 cores
-  drive `wrk`). It's labelled in the manifest (`cpus=2`). For a 4-cpu SUT *with* an isolated
-  generator you need an 8-core host (the split then gives the SUT 4 cores, `wrk` the other 4).
-- **`cpu`-group calibration.** Defaults aim for **~20-30ms per request**: heavy enough to
-  dominate `/bench/hello`, light enough that a sweep to concurrency 128 doesn't saturate
-  into `wrk` timeouts on a 4-core box. Tune on your box via `BENCH_HASH_ITERATIONS` (2000),
-  `BENCH_MANDELBROT_DIM` (32) / `BENCH_MANDELBROT_MAX_ITER` (256), and
-  `BENCH_JSON_ITERATIONS` (150); `…_REPEAT` scales mandelbrot up for heavier hosts.
+- Single-machine benchmark: use the relative shape, not the exact numbers.
+- Hosted runners are noisy, even with CPU pinning.
+- On the default 4-core runner, the server under test gets 2 CPUs because the other 2 CPUs
+  are reserved for wrk.
+- If the host does not honor `--cpuset-cpus`, affected cells are tagged
+  `pinning=unverified`.
+- CPU workloads are calibrated to land around 20-30 ms per request by default. Tune the
+  `BENCH_*` variables if your machine is much faster or slower.
+- `/bench/db` compares default Octane database behavior per server, not isolated database
+  driver performance.
 
 ## Roadmap
 
-- **Phase 2 — living benchmark:** the GitHub Actions workflow already runs the matrix on
-  `ubuntu-24.04` and can deploy to GitHub Pages. Next: a `schedule:` trigger to auto-re-run
-  on each PHP/Octane/server release. (Caveat: hosted runners are noisy; for a **4-cpu**
-  SUT with the generator still isolated, use a self-hosted 8-core+ runner — the split then
-  gives the SUT `0-3` and `wrk` `4-7` automatically.)
-- **Phase 3 — decision engine:** "tell me my app's shape → which server + worker count."
+- Phase 2: turn the workflow into a living benchmark that reruns on PHP, Octane, and
+  server releases.
+- Phase 3: add a small decision helper for mapping an application's workload shape to a
+  server and worker-count recommendation.
 
-## Layout
+## Project Layout
 
-```
-routes/web.php              # /bench/{hello,hash,mandelbrot,json,db} workloads
-compose.yml                 # 5 servers + mysql + pinned wrk (caps & cpuset here)
-docker/wrk/                 # wrk image + Lua JSON reporter
-docker/fpm/ , docker/nginx/ # FPM pool + opcache parity, nginx FastCGI front
-Makefile                    # container-first workflow (make help)
-benchmark.sh                # the matrix harness
-bench/aggregate.py          # results → RESULTS.md + docs/ (Compare + per-server pages)
-bench/dashboard_template.html , bench/server_template.html  # docs/ page templates
-bench/mem-profile.sh , bench/mem_profile.py  # idle per-worker memory profiler
-database/migrations/*bench_items*  # seeds the /bench/db table
-.github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
-readmes/                    # README translations (10 languages)
+```text
+routes/web.php              # /bench/{hello,hash,mandelbrot,json,db}
+compose.yml                 # app servers, MySQL, wrk, CPU caps, cpusets
+docker/wrk/                 # wrk image and Lua JSON reporter
+docker/fpm/                 # FPM pool and OPcache parity config
+docker/nginx/               # nginx FastCGI front for the FPM control
+Makefile                    # local workflow helpers
+benchmark.sh                # benchmark matrix runner
+bench/aggregate.py          # results -> RESULTS.md and docs/
+bench/mem-profile.sh        # idle memory profiler runner
+bench/mem_profile.py        # memory profile fitting/report script
+database/migrations/        # bench table migration and seed data
+.github/workflows/          # CI benchmark workflow
+readmes/                    # translated README files
 ```

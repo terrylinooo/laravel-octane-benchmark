@@ -15,6 +15,13 @@ Harness fixiert jede Störvariable, legt sie alle offen und veröffentlicht
 **Latenz-Crossover-Kurven pro Workload**. Das Urteil lautet ausdrücklich „es kommt darauf an —
 und hier ist genau, worauf. Führe es selbst aus."
 
+Am schnellsten zu sein bedeutet nicht automatisch, am besten zu sein. Swoole/OpenSwoole,
+RoadRunner und FrankenPHP haben jeweils eigene Stärken, Schwächen und passende
+Einsatzszenarien. Eine echte Auswahl hängt auch vom Betriebsmodell, der Unterstützung im
+Ökosystem, der Deployment-Form, der Kompatibilität von Extensions und der Vertrautheit des
+Teams ab. Dieses Projekt versucht diese Entscheidung nicht zu treffen; es führt die Server
+nur in einer fairen, reproduzierbaren Umgebung aus und veröffentlicht die Daten.
+
 ## Ergebnisse
 
 Führe es aus und öffne `docs/index.html` (Diagramme) / `RESULTS.md` (Tabellen). Ein
@@ -88,6 +95,11 @@ Standard-Octane-DB-Verhalten jedes Servers"** abgegrenzt, nicht als isolierte
 Raw-Query-Messung. Er ist im Diagramm entsprechend gekennzeichnet.
 
 ## Ausführen
+
+Standardmäßig erzeugt dieses Projekt die Benchmark-Berichte auf einem GitHub-Actions-Runner.
+Du kannst den Workflow dieses Repositories direkt nutzen, das Projekt forken und in deinem
+eigenen Repo ausführen, oder dasselbe Harness auf einer lokalen oder entfernten Maschine
+starten, die du selbst kontrollierst.
 
 **In CI (der Standard):** löse den **Benchmark**-Workflow (`.github/workflows/benchmark.yml`)
 über *Actions → Run workflow* aus. Er läuft auf `ubuntu-24.04`, erstellt den Bericht und lädt

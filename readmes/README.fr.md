@@ -16,6 +16,13 @@ parasites, les divulgue toutes, et publie des **courbes de croisement de latence
 de travail**. Le verdict est explicitement « ça dépend — voici exactement de quoi ça dépend.
 Allez le lancer vous-même. »
 
+Le plus rapide n'est pas automatiquement le meilleur. Swoole/OpenSwoole, RoadRunner et
+FrankenPHP ont chacun leurs compromis et leurs scénarios d'application naturels. Un vrai
+choix dépend aussi du modèle d'exploitation, du support de l'écosystème, du mode de
+déploiement, de la compatibilité des extensions et de la familiarité de l'équipe. Ce projet
+ne cherche pas à trancher cette décision ; il se contente d'exécuter les serveurs dans un
+environnement équitable et reproductible, puis de publier les données.
+
 ## Résultats
 
 Lancez-le et ouvrez `docs/index.html` (graphiques) / `RESULTS.md` (tableaux). Une exécution
@@ -92,6 +99,10 @@ comme **« le comportement DB Octane par défaut de chaque serveur »**, et non 
 isolée de requête brute. Elle est étiquetée comme telle sur le graphique.
 
 ## Lancez-le
+
+Par défaut, ce projet génère les rapports de benchmark sur un runner GitHub Actions. Vous
+pouvez utiliser le workflow de ce dépôt tel quel, le forker et l'exécuter dans votre propre
+repo, ou lancer le même harness sur une machine locale ou distante que vous contrôlez.
 
 **En CI (par défaut) :** déclenchez le workflow **Benchmark**
 (`.github/workflows/benchmark.yml`) via *Actions → Run workflow*. Il s'exécute sur
