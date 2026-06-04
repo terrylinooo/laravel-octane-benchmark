@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Laravel Octane Benchmark</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -25,7 +26,8 @@
     --cross: #9a3b2e;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
+  img, canvas { max-width: 100%; }
   body {
     background: var(--bg);
     color: var(--text);
@@ -35,6 +37,8 @@
     -webkit-font-smoothing: antialiased;
     transition: background .25s ease, color .25s ease;
   }
+  /* Horizontal-scroll wrapper for wide tables (scroll inside the card, never widen the page) */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
 
   /* ===== Shared top header (identical on every page) ===== */
   .topbar {
@@ -42,7 +46,7 @@
     background: color-mix(in srgb, var(--card) 85%, transparent);
     backdrop-filter: saturate(180%) blur(12px);
     border-bottom: 1px solid var(--border);
-    height: 60px; padding: 0 24px;
+    height: 62px; padding: 0 24px;
     display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
   }
   .brand {
@@ -52,7 +56,7 @@
   }
   .brand-logo {
     position: absolute; left: 24px; top: 0;
-    height: 60px; width: auto; object-fit: contain;
+    height: 62px; width: auto; object-fit: contain;
   }
   .brand .wordmark {
     font-size: 15px; font-weight: 650; letter-spacing: -.01em; color: var(--text);
@@ -120,9 +124,9 @@
   /* Layout */
   .shell { display: flex; align-items: flex-start; }
   .sidebar {
-    position: sticky; top: 60px; align-self: flex-start;
+    position: sticky; top: 62px; align-self: flex-start;
     width: 188px; flex-shrink: 0; padding: 24px 14px;
-    height: calc(100vh - 60px);
+    height: calc(100vh - 62px);
   }
   .sidebar .nav-label {
     font-size: 10.5px; font-weight: 650; text-transform: uppercase;
@@ -137,9 +141,33 @@
   .sidebar a:hover { background: var(--pill-bg); color: var(--text); }
   .sidebar a.active { background: var(--sidebar-active); color: var(--accent); font-weight: 600; }
   .sidebar a .ico { width: 15px; text-align: center; opacity: .9; }
+  .sidebar a .material-symbols-outlined {
+    font-size: 19px; line-height: 1; width: 20px; text-align: center;
+    vertical-align: middle; opacity: .9; flex-shrink: 0;
+    font-variation-settings: 'opsz' 20, 'wght' 400, 'FILL' 0, 'GRAD' 0;
+  }
+  .sidebar a.active .material-symbols-outlined { opacity: 1; }
+
+  /* ===== GitHub link (top-right) ===== */
+  .gh-link {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 9px;
+    color: var(--text-2); text-decoration: none; transition: all .14s;
+  }
+  .gh-link:hover { color: var(--text); background: var(--pill-bg); }
+  .gh-link svg { display: block; }
+
+  /* ===== Site footer (full page width, below shell) ===== */
+  .site-footer {
+    border-top: 1px solid var(--border);
+    text-align: center; padding: 20px 24px;
+    font-size: 12.5px; color: var(--text-3);
+  }
+  .site-footer a { color: var(--accent); text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
 
   main { flex: 1; min-width: 0; padding: 28px 32px 80px; max-width: 1280px; }
-  section { scroll-margin-top: 72px; margin-bottom: 44px; }
+  section { scroll-margin-top: 74px; margin-bottom: 44px; }
   .sec-head { margin-bottom: 18px; }
   .sec-head h2 {
     font-size: 19px; font-weight: 680; margin: 0 0 3px;
@@ -165,7 +193,7 @@
     display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
     gap: 20px; align-items: stretch;
   }
-  .heatmap { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .heatmap { width: 100%; min-width: 440px; border-collapse: separate; border-spacing: 0; }
   .heatmap th {
     font-size: 11px; font-weight: 600; color: var(--text-3);
     text-transform: uppercase; letter-spacing: .04em; padding: 0 6px 10px;
@@ -231,9 +259,10 @@
 
   /* Per-workload data table */
   .wl-table-wrap {
-    grid-column: 1 / -1; margin-top: 14px; overflow-x: auto;
+    grid-column: 1 / -1; margin-top: 14px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%;
   }
-  .wl-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .wl-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; }
   .wl-table th {
     font-size: 10.5px; font-weight: 650; color: var(--text-3);
     text-transform: uppercase; letter-spacing: .04em; padding: 0 8px 8px;
@@ -288,16 +317,39 @@
     .kpis { flex-wrap: wrap; }
     .kpi { min-width: 160px; }
   }
+  /* Hide the scrollspy sidebar; main goes full width below 860px */
   @media (max-width: 860px) {
-    .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 9px 14px; }
-    .brand .wordmark { display: none; }
-    .topnav { gap: 2px; padding: 3px; }
-    .topnav a { padding: 5px 9px; font-size: 12px; }
+    .sidebar { display: none; }
+    .shell { display: block; }
+    main { flex: none; width: 100%; max-width: 100%; padding: 22px 18px 64px; }
+    .topbar { padding: 0 14px; }
     .metastrip { padding: 9px 14px; }
   }
-  @media (max-width: 760px) {
-    .sidebar { display: none; }
-    main { padding: 20px 16px 60px; }
+  /* Compact header: hide wordmark, make the 5-item menu horizontally scrollable */
+  @media (max-width: 720px) {
+    .topbar {
+      display: flex; align-items: center; gap: 10px;
+      grid-template-columns: none;
+    }
+    .brand { padding-left: 46px; flex-shrink: 0; }
+    .brand .wordmark { display: none; }
+    .topnav {
+      flex: 1 1 auto; min-width: 0; justify-self: stretch;
+      flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; gap: 2px; padding: 3px;
+    }
+    .topnav::-webkit-scrollbar { display: none; }
+    .topnav a { padding: 5px 10px; font-size: 12px; flex-shrink: 0; }
+    .topbar-right { flex-shrink: 0; }
+  }
+  /* Phones: stack summary, single-column KPIs, smaller padding */
+  @media (max-width: 640px) {
+    main { padding: 18px 12px 56px; }
+    .card { padding: 16px 14px; }
+    .hero-grid { gap: 14px; }
+    .kpis { flex-direction: column; flex-wrap: nowrap; gap: 12px; }
+    .kpi { min-width: 0; width: 100%; }
+    .chart-pair { gap: 16px; }
   }
 </style>
 </head>
@@ -315,7 +367,11 @@
     <a href="roadrunner.html" data-nav="roadrunner">RoadRunner</a>
     <a href="frankenphp.html" data-nav="frankenphp">FrankenPHP</a>
   </nav>
-  <div class="topbar-right"></div>
+  <div class="topbar-right">
+    <a class="gh-link" href="https://github.com/terrylinooo/laravel-octane-benchmark" target="_blank" rel="noopener" title="View on GitHub" aria-label="GitHub repository">
+      <svg height="22" width="22" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+    </a>
+  </div>
 </header>
 
 <div class="metastrip">
@@ -328,11 +384,11 @@
 <div class="shell">
   <nav class="sidebar" id="sidebar">
     <div class="nav-label">Navigate</div>
-    <a href="#summary" class="active"><span class="ico">&#9703;</span> Summary</a>
-    <a href="#overhead"><span class="ico">&#9889;</span> Overhead</a>
-    <a href="#cpu"><span class="ico">&#9638;</span> CPU</a>
-    <a href="#io"><span class="ico">&#8644;</span> I/O</a>
-    <a href="#memory"><span class="ico">&#9636;</span> Memory</a>
+    <a href="#summary" class="active"><span class="material-symbols-outlined">leaderboard</span> Summary</a>
+    <a href="#overhead"><span class="material-symbols-outlined">bolt</span> Overhead</a>
+    <a href="#cpu"><span class="material-symbols-outlined">memory</span> CPU</a>
+    <a href="#io"><span class="material-symbols-outlined">database</span> I/O</a>
+    <a href="#memory"><span class="material-symbols-outlined">developer_board</span> Memory</a>
   </nav>
 
   <main>
@@ -346,7 +402,7 @@
         <div class="card">
           <div class="card-title">Winner heatmap &mdash; lowest p99 latency</div>
           <div class="card-sub">Each cell shows the server with the lowest median p99 at that concurrency.</div>
-          <table class="heatmap" id="heatmap"></table>
+          <div class="table-scroll"><table class="heatmap" id="heatmap"></table></div>
         </div>
         <div class="kpis" id="kpis"></div>
       </div>
@@ -373,6 +429,10 @@
     </section>
   </main>
 </div>
+
+<footer class="site-footer">
+  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L</a> at <a href="https://www.airygen.com/en" target="_blank" rel="noopener">Airygen</a>
+</footer>
 
 <script>
 /* ===== DATA (injected by build step) ===== */
