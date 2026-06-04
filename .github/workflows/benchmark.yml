@@ -40,10 +40,6 @@ on:
 env:
   GITHUB_REGISTRY: ghcr.io
   GITHUB_USERNAME: ${{ github.actor }}
-  # Set repo secret GH_PAT (a PAT with read:packages) ONLY if the ghcr.io/airygen
-  # images are private. If you make those packages public, leave it unset and the
-  # login step below is skipped (anonymous pull works).
-  GH_PAT: ${{ secrets.GH_PAT }}
 
 jobs:
   benchmark:
