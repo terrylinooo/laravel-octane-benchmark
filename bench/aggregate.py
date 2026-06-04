@@ -28,8 +28,9 @@ def load_cells():
     for path in sorted(glob.glob(os.path.join(RESULTS, "*.json"))):
         with open(path) as fh:
             d = json.load(fh)
+        w = d.get("workers", 0)  # worker-count dimension (0 = pre-sweep data)
         if path.endswith("_rss.json"):
-            rss[(d["server"], d["workload"])] = d
+            rss[(d["server"], d["workload"], w)] = d
         elif "wrk" in d:
             cells.append(d)
             if manifest is None:
@@ -38,19 +39,19 @@ def load_cells():
 
 
 def aggregate(cells):
-    # group runs by (server, workload, concurrency)
+    # group runs by (server, workload, workers, concurrency)
     groups = defaultdict(list)
     for c in cells:
-        groups[(c["server"], c["workload"], c["concurrency"])].append(c)
+        groups[(c["server"], c["workload"], c.get("workers", 0), c["concurrency"])].append(c)
 
     out = {}
-    for (server, workload, conc), runs in groups.items():
+    for (server, workload, workers, conc), runs in groups.items():
         rps = [r["wrk"]["rps"] for r in runs]
         p50 = [r["wrk"]["latency_ms"]["p50"] for r in runs]
         p99 = [r["wrk"]["latency_ms"]["p99"] for r in runs]
         errors = sum(sum(r["wrk"]["errors"].values()) for r in runs)
-        out[(server, workload, conc)] = {
-            "server": server, "workload": workload, "concurrency": conc,
+        out[(server, workload, workers, conc)] = {
+            "server": server, "workload": workload, "workers": workers, "concurrency": conc,
             "runs": len(runs),
             "rps_median": round(statistics.median(rps), 1),
             "rps_min": round(min(rps), 1), "rps_max": round(max(rps), 1),
@@ -116,22 +117,23 @@ def main():
     # Canonical display order (Octane servers first, fpm control last; workloads
     # by group, cheap -> expensive). Unknown keys fall to the end, first-seen.
     SERVER_ORDER = ["swoole", "openswoole", "roadrunner", "frankenphp", "fpm"]
-    found_s = {s for (s, _, _) in agg}
-    found_w = {w for (_, w, _) in agg}
+    found_s = {s for (s, _, _, _) in agg}
+    found_w = {w for (_, w, _, _) in agg}
     servers = [s for s in SERVER_ORDER if s in found_s] + sorted(found_s - set(SERVER_ORDER))
     workloads = [w for w in WORKLOAD_ORDER if w in found_w] + sorted(found_w - set(WORKLOAD_ORDER))
     groups = grouped(workloads)
-    concs = sorted({c for (_, _, c) in agg})
+    concs = sorted({c for (_, _, _, c) in agg})
+    worker_counts = sorted({wk for (_, _, wk, _) in agg})
 
     # ---- summary.json ----
     summary = {
         "manifest": manifest,
         "servers": servers, "workloads": workloads, "groups": groups,
-        "concurrencies": concs,
+        "concurrencies": concs, "worker_counts": worker_counts,
         "cells": list(agg.values()),
         "rss": [
-            {"server": s, "workload": w, "peak_rss_mib": d["peak_rss_mib"]}
-            for (s, w), d in sorted(rss.items())
+            {"server": s, "workload": w, "workers": wk, "peak_rss_mib": d["peak_rss_mib"]}
+            for (s, w, wk), d in sorted(rss.items())
         ],
     }
     with open(os.path.join(DOCS, "summary.json"), "w") as fh:
@@ -142,7 +144,7 @@ def main():
     if manifest:
         lines += [
             f"PHP {manifest.get('php')} · Laravel {manifest.get('laravel')} · "
-            f"Octane {manifest.get('octane')} · {manifest.get('workers')} workers · "
+            f"Octane {manifest.get('octane')} · workers {manifest.get('worker_counts')} · "
             f"caps `{manifest.get('caps')}` · host `{manifest.get('host')}` "
             f"({manifest.get('nproc')} cores) · commit `{manifest.get('commit')}` · "
             f"{manifest.get('generated_at')}",
@@ -153,44 +155,50 @@ def main():
             "",
         ]
 
-    def cell(s, w, c):
-        return agg.get((s, w, c))
+    def cell(s, w, wk, c):
+        return agg.get((s, w, wk, c))
 
-    for grp in groups:
-        lines += [f"## {grp['label']}", ""]
-        for w in grp["workloads"]:
-            lines.append(f"### `/bench/{w}`")
-            lines.append("")
-            header = "| Server | " + " | ".join(
-                f"c{c} rps | c{c} p99 (ms)" for c in concs) + " |"
-            sep = "|" + "---|" * (1 + 2 * len(concs))
+    multi = len(worker_counts) > 1
+    for wk in worker_counts:
+        if multi:
+            lines += [f"# {wk} workers", ""]
+        for grp in groups:
+            lines += [f"## {grp['label']}", ""]
+            for w in grp["workloads"]:
+                lines.append(f"### `/bench/{w}`")
+                lines.append("")
+                header = "| Server | " + " | ".join(
+                    f"c{c} rps | c{c} p99 (ms)" for c in concs) + " |"
+                sep = "|" + "---|" * (1 + 2 * len(concs))
+                lines += [header, sep]
+                for s in servers:
+                    row = [f"`{s}`"]
+                    for c in concs:
+                        d = cell(s, w, wk, c)
+                        if not d:
+                            row += ["–", "–"]
+                        else:
+                            flag = " ⚠️" if d["errors"] else ""
+                            row += [f"{d['rps_median']:.0f}{flag}", f"{d['p99_median']:.1f}"]
+                    lines.append("| " + " | ".join(row) + " |")
+                lines.append("")
+
+        rss_wk = {(s, w): d for (s, w, w2), d in rss.items() if w2 == wk}
+        if rss_wk:
+            label = f" — {wk} workers" if multi else " — secondary metric"
+            lines += [f"## Peak RSS (MiB){label}", "",
+                      "Per-server memory high-water mark under load (shared OPcache counted once). "
+                      "Octane keeps the framework resident per worker; FPM holds far less.", ""]
+            header = "| Server | " + " | ".join(f"`{w}`" for w in workloads) + " |"
+            sep = "|" + "---|" * (1 + len(workloads))
             lines += [header, sep]
             for s in servers:
                 row = [f"`{s}`"]
-                for c in concs:
-                    d = cell(s, w, c)
-                    if not d:
-                        row += ["–", "–"]
-                    else:
-                        flag = " ⚠️" if d["errors"] else ""
-                        row += [f"{d['rps_median']:.0f}{flag}", f"{d['p99_median']:.1f}"]
+                for w in workloads:
+                    d = rss_wk.get((s, w))
+                    row.append(str(d["peak_rss_mib"]) if d else "–")
                 lines.append("| " + " | ".join(row) + " |")
             lines.append("")
-
-    if rss:
-        lines += ["## Peak RSS (MiB) — secondary metric", "",
-                  "Per-server memory high-water mark under load. Octane keeps the framework "
-                  "resident across 8 workers; FPM holds far less. Useful for VPS sizing.", ""]
-        header = "| Server | " + " | ".join(f"`{w}`" for w in workloads) + " |"
-        sep = "|" + "---|" * (1 + len(workloads))
-        lines += [header, sep]
-        for s in servers:
-            row = [f"`{s}`"]
-            for w in workloads:
-                d = rss.get((s, w))
-                row.append(str(d["peak_rss_mib"]) if d else "–")
-            lines.append("| " + " | ".join(row) + " |")
-        lines.append("")
 
     lines += ["⚠️ = cell recorded wrk errors (non-2xx/timeout); its latency is not clean.", ""]
     with open(os.path.join(ROOT, "RESULTS.md"), "w") as fh:

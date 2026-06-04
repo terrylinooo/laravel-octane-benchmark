@@ -53,10 +53,11 @@ WRK_CPUSET="${WRK_CPUSET:-$HALF-$((NPROC - 1))}"
 export SUT_CPUS SUT_CPUSET WRK_CPUSET
 # Isolated whenever the two core sets differ (always, by construction of the split).
 GEN_ISOLATED=true; [ "$SUT_CPUSET" = "$WRK_CPUSET" ] && GEN_ISOLATED=false
-# Workers track the SUT's cores (Octane's ~2 workers/CPU): 4 on the 2-cpu CI runner,
-# 8 on an 8-core host. compose reads OCTANE_WORKERS; FPM is matched via pool.conf.
-OCTANE_WORKERS="${OCTANE_WORKERS:-$(( SUT_CPUS * 2 ))}"
-export OCTANE_WORKERS
+# Worker-count sweep (a matrix dimension). Default = Octane's ~2 workers/CPU and its
+# x2: 4 and 8 on the 2-cpu runner (8 and 16 on an 8-core host). OCTANE_WORKERS is set
+# per pass inside the loop; compose reads it and the FPM pool.conf is matched.
+BASE_WORKERS="$(( SUT_CPUS * 2 ))"
+WORKER_COUNTS="${WORKER_COUNTS:-${OCTANE_WORKERS:-$BASE_WORKERS $(( BASE_WORKERS * 2 ))}}"
 
 dc() { docker compose "$@"; }
 
@@ -109,11 +110,11 @@ wait_healthy() {
 
 # ---- are all cells for this (server,workload) already on disk? -----------------
 cells_complete() {
-  local server="$1" workload="$2" conc run f
-  [ -f "$RESULTS_DIR/${server}_${workload}_rss.json" ] || return 1
+  local workers="$1" server="$2" workload="$3" conc run f
+  [ -f "$RESULTS_DIR/${server}_${workload}_w${workers}_rss.json" ] || return 1
   for conc in $CONCURRENCIES; do
     for run in $(seq 1 "$RUNS"); do
-      f="$RESULTS_DIR/${server}_${workload}_c${conc}_r${run}.json"
+      f="$RESULTS_DIR/${server}_${workload}_w${workers}_c${conc}_r${run}.json"
       [ -f "$f" ] || return 1
     done
   done
@@ -132,20 +133,20 @@ build_manifest() {
     --arg php "${php_ver:-8.4.x}" --arg octane "${octane_ver:-?}" --arg laravel "${laravel_ver:-?}" \
     --arg commit "$commit" --arg host "$host" --arg nproc "$NPROC" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --argjson workers "$OCTANE_WORKERS" \
+    --arg worker_counts "$WORKER_COUNTS" \
     --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-8g}" \
     --arg wrk "wrk -t${THREADS} -d${DURATION}s --timeout ${TIMEOUT} --latency" \
     --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
-    '{php:$php, laravel:$laravel, octane:$octane, workers:$workers, caps:$caps,
+    '{php:$php, laravel:$laravel, octane:$octane, worker_counts:$worker_counts, caps:$caps,
       commit:$commit, host:$host, nproc:($nproc|tonumber), wrk_cmd:$wrk,
       wrk_cpuset:$wrk_cpuset, generator_isolated:$gen_isolated, generated_at:$date}'
 }
 
 # ---- one wrk run -> writes a cell file ----------------------------------------
 run_cell() {
-  local server="$1" workload="$2" conc="$3" run="$4" target="$5" pinning="$6"
+  local workers="$1" server="$2" workload="$3" conc="$4" run="$5" target="$6" pinning="$7"
   local route out wrkjson f
-  f="$RESULTS_DIR/${server}_${workload}_c${conc}_r${run}.json"
+  f="$RESULTS_DIR/${server}_${workload}_w${workers}_c${conc}_r${run}.json"
   [ -f "$f" ] && { echo "      c${conc} r${run}: cached"; return 0; }
   route=$(route_for "$workload")
   out=$(dc run --rm wrk -t"$THREADS" -c"$conc" -d"${DURATION}s" --timeout "$TIMEOUT" --latency -s /report.lua \
@@ -157,8 +158,8 @@ run_cell() {
   fi
   jq -n --argjson wrk "$wrkjson" --argjson man "$MANIFEST" \
     --arg server "$server" --arg workload "$workload" --arg route "$route" \
-    --argjson conc "$conc" --argjson run "$run" --arg pinning "$pinning" \
-    '{server:$server, workload:$workload, route:$route, concurrency:$conc, run:$run,
+    --argjson workers "$workers" --argjson conc "$conc" --argjson run "$run" --arg pinning "$pinning" \
+    '{server:$server, workload:$workload, route:$route, workers:$workers, concurrency:$conc, run:$run,
       pinning:$pinning, wrk:$wrk, manifest:$man}' > "$f"
   local rps p99 errs
   rps=$(jq -r '.wrk.rps' "$f"); p99=$(jq -r '.wrk.latency_ms.p99' "$f")
@@ -170,7 +171,7 @@ run_cell() {
 echo "Servers:       $SERVERS"
 echo "Workloads:     $WORKLOADS"
 echo "Concurrencies: $CONCURRENCIES   Runs/cell: $RUNS   Duration: ${DURATION}s   Warmup: ${WARMUP}s"
-echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   workers=$OCTANE_WORKERS   generator_isolated=$GEN_ISOLATED"
+echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   workers=[$WORKER_COUNTS]   generator_isolated=$GEN_ISOLATED"
 [ "$GEN_ISOLATED" = false ] && echo "  ! host too small to split — generator shares the SUT's cores (co-resident), relative-only."
 echo
 
@@ -185,55 +186,59 @@ MANIFEST=$(build_manifest)
 echo "==> Manifest: $(jq -c '{php,laravel,octane,commit,caps}' <<<"$MANIFEST")"
 echo
 
-# Match the FPM pool to OCTANE_WORKERS so the control group has the same worker
-# budget. Write into the bind-mounted pool.conf from a pristine copy via redirect
-# (preserves the inode — `sed -i` swaps it and breaks the Docker Desktop / WSL2
-# bind-mount snapshot); restore on exit. fpm is force-recreated in the loop so the
-# changed mount is re-snapshotted.
+# FPM pool tracks the worker count. Back up the pristine pool.conf once and restore
+# on exit; each worker pass rewrites pm.max_children into it from the pristine copy
+# via redirect (preserves the inode — `sed -i` swaps it and breaks the Docker
+# Desktop / WSL2 bind-mount snapshot). All app servers are force-recreated per
+# (server,workload) so a changed worker count + pool.conf actually take effect.
 POOL="docker/fpm/pool.conf"
 cp "$POOL" "$POOL.orig"
 trap 'mv -f "$POOL.orig" "$POOL" 2>/dev/null || true' EXIT
-sed "s/^pm.max_children = .*/pm.max_children = ${OCTANE_WORKERS}/" "$POOL.orig" > "$POOL"
 
-for server in $SERVERS; do
-  target=$(server_target "$server"); svcs=$(server_services "$server"); measure=$(server_measure "$server")
-  echo "################ $server  (target=$target) ################"
-  for workload in $WORKLOADS; do
-    if cells_complete "$server" "$workload"; then
-      echo "  -- $workload: complete, skipping"
-      continue
-    fi
-    echo "  -- $workload"
-    dc stop $APP_SERVICES >/dev/null 2>&1
-    # fpm: force-recreate so the worker-count pool.conf change is re-snapshotted.
-    if [ "$server" = fpm ]; then dc up -d --force-recreate $svcs >/dev/null 2>&1
-    else dc up -d $svcs >/dev/null 2>&1; fi
-    if ! wait_healthy $svcs; then
-      echo "     UNHEALTHY — skipping $server/$workload" >&2
-      dc stop $svcs >/dev/null 2>&1; continue
-    fi
-    # pinning self-check on the measured container
-    cpuset=$(read_cpuset "$measure")
-    pinning="unverified"; [ "$cpuset" = "$SUT_CPUSET" ] && pinning="verified"
-    [ "$pinning" = "unverified" ] && echo "     ! cpuset='$cpuset' (expected $SUT_CPUSET) — results tagged pinning=unverified"
-    # measured sweep — warm AT each concurrency (discarded) before its runs, so a
-    # level isn't penalized by the previous level's state or residual cold-start
-    # (fixes the order artifact where the first-measured concurrency reads high).
-    for conc in $CONCURRENCIES; do
-      dc run --rm wrk -t"$THREADS" -c"$conc" -d"${WARMUP}s" --timeout "$TIMEOUT" \
-        "http://${target}:8000$(route_for "$workload")" >/dev/null 2>&1
-      for run in $(seq 1 "$RUNS"); do
-        run_cell "$server" "$workload" "$conc" "$run" "$target" "$pinning"
+for workers in $WORKER_COUNTS; do
+  export OCTANE_WORKERS="$workers"
+  sed "s/^pm.max_children = .*/pm.max_children = ${workers}/" "$POOL.orig" > "$POOL"
+  echo "=================== workers=$workers ==================="
+  for server in $SERVERS; do
+    target=$(server_target "$server"); svcs=$(server_services "$server"); measure=$(server_measure "$server")
+    echo "################ $server  (workers=$workers, target=$target) ################"
+    for workload in $WORKLOADS; do
+      if cells_complete "$workers" "$server" "$workload"; then
+        echo "  -- $workload: complete, skipping"
+        continue
+      fi
+      echo "  -- $workload"
+      dc stop $APP_SERVICES >/dev/null 2>&1
+      # force-recreate so the new --workers (and FPM pool.conf) take effect.
+      dc up -d --force-recreate $svcs >/dev/null 2>&1
+      if ! wait_healthy $svcs; then
+        echo "     UNHEALTHY — skipping $server/$workload" >&2
+        dc stop $svcs >/dev/null 2>&1; continue
+      fi
+      # pinning self-check on the measured container
+      cpuset=$(read_cpuset "$measure")
+      pinning="unverified"; [ "$cpuset" = "$SUT_CPUSET" ] && pinning="verified"
+      [ "$pinning" = "unverified" ] && echo "     ! cpuset='$cpuset' (expected $SUT_CPUSET) — results tagged pinning=unverified"
+      # measured sweep — warm AT each concurrency (discarded) before its runs, so a
+      # level isn't penalized by the previous level's state or residual cold-start.
+      for conc in $CONCURRENCIES; do
+        dc run --rm wrk -t"$THREADS" -c"$conc" -d"${WARMUP}s" --timeout "$TIMEOUT" \
+          "http://${target}:8000$(route_for "$workload")" >/dev/null 2>&1
+        for run in $(seq 1 "$RUNS"); do
+          run_cell "$workers" "$server" "$workload" "$conc" "$run" "$target" "$pinning"
+        done
       done
+      # peak RSS for this (server,workload,workers) — cgroup high-water mark (v2 or v1)
+      rss=$(read_peak_rss "$measure")
+      jq -n --arg server "$server" --arg workload "$workload" --argjson workers "$workers" \
+        --argjson bytes "${rss:-0}" --arg pinning "$pinning" \
+        '{server:$server, workload:$workload, workers:$workers, peak_rss_bytes:$bytes,
+          peak_rss_mib:(($bytes/1048576)|floor), pinning:$pinning}' \
+        > "$RESULTS_DIR/${server}_${workload}_w${workers}_rss.json"
+      printf "     peak RSS: %s MiB\n" "$(( ${rss:-0} / 1048576 ))"
+      dc stop $svcs >/dev/null 2>&1
+      sleep "$SETTLE"
     done
-    # peak RSS for this (server,workload) — cgroup high-water mark (v2 or v1)
-    rss=$(read_peak_rss "$measure")
-    jq -n --arg server "$server" --arg workload "$workload" --argjson bytes "${rss:-0}" --arg pinning "$pinning" \
-      '{server:$server, workload:$workload, peak_rss_bytes:$bytes, peak_rss_mib:(($bytes/1048576)|floor), pinning:$pinning}' \
-      > "$RESULTS_DIR/${server}_${workload}_rss.json"
-    printf "     peak RSS: %s MiB\n" "$(( ${rss:-0} / 1048576 ))"
-    dc stop $svcs >/dev/null 2>&1
-    sleep "$SETTLE"
   done
 done
 

@@ -39,7 +39,7 @@ are flagged, never silently averaged in.
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **~2 per SUT cpu** (`OCTANE_WORKERS`; FPM `pm=static`, `max_children` matched) — 4 on the 2-cpu runner, 8 on 8 cores | Octane's guidance, same budget for every server (incl. the FPM control) |
+| Workers | **swept** (`WORKER_COUNTS`, default ~2/cpu and its ×2 → `4 8` on the 2-cpu runner); FPM `max_children` matched | a matrix dimension — see how each server scales with workers. Same count for every server (incl. the FPM control) per pass |
 | CPU | **the host's lower half** — `cpus=2`, `cpuset=0-1` on the 4-core runner (`cpus=4`, `cpuset=0-3` on an 8-core host) | every server gets the same cores; the SUT cpu count is recorded in the manifest caps |
 | Load generator | **`wrk` on the host's upper half** (`cpuset=2-3` on the runner, `4-7` on 8 cores) — disjoint from the SUT | the generator is **always isolated**: it never steals the SUT's CPU. Recorded per-cell as `generator_isolated` |
 | Memory | `mem_limit=8g` (env `MEM_LIMIT`) | generous **equal** ceiling — never binds on the 16 GB runner, so no server is OOM-penalized and peak RSS reads the true high-water mark (not clamped). Set `MEM_LIMIT=512m` for a small-VPS scenario |
@@ -88,7 +88,7 @@ behavior,"** not an isolated raw-query measurement. It's labeled as such on the 
 **Locally** — **Prerequisite:** Docker (Compose v2).
 
 ```bash
-# Full matrix (5 servers × 5 workloads × concurrency 8/16/32/64/128 × 3 runs).
+# Full matrix (5 servers × 5 workloads × 5 concurrencies × 2 worker counts × 3 runs).
 # Resumable — a cell whose JSON exists is skipped, so a crash never restarts from zero.
 ./benchmark.sh
 
@@ -100,7 +100,7 @@ python3 bench/aggregate.py
 SERVERS="swoole fpm" WORKLOADS="hello db" CONCURRENCIES=8 RUNS=1 DURATION=5 WARMUP=2 ./benchmark.sh
 ```
 
-Tunable via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `RUNS`, `DURATION`, `WARMUP`,
+Tunable via env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `WORKER_COUNTS`, `RUNS`, `DURATION`, `WARMUP`,
 `TIMEOUT`, `BENCH_HASH_ITERATIONS`, `BENCH_MANDELBROT_DIM`, `BENCH_MANDELBROT_MAX_ITER`,
 `BENCH_MANDELBROT_REPEAT`, `BENCH_JSON_ITERATIONS`. Each (server, workload) is warmed
 **at every concurrency** before its runs, and `wrk --timeout` (default 15s) lets a slow,
