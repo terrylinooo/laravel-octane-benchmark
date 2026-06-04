@@ -34,7 +34,7 @@ on:
       publish:
         description: "Deploy docs/ to GitHub Pages (Settings -> Pages -> Source: GitHub Actions)"
         type: boolean
-        default: false
+        default: true
   # schedule:
   #   - cron: "0 6 1 * *"   # monthly, to re-run on new PHP/Octane/server releases
 
