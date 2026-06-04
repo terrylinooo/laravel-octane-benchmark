@@ -42,16 +42,17 @@
     background: color-mix(in srgb, var(--card) 85%, transparent);
     backdrop-filter: saturate(180%) blur(12px);
     border-bottom: 1px solid var(--border);
-    padding: 6px 24px;
-    display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch; gap: 16px;
+    height: 60px; padding: 0 24px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
   }
   .brand {
     display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
-    color: var(--text); white-space: nowrap; justify-self: start; align-self: stretch;
+    color: var(--text); white-space: nowrap; justify-self: start; align-self: center;
+    padding-left: 105px;
   }
   .brand-logo {
-    height: 100%; width: auto; display: block; object-fit: contain;
-    padding: 3px 0; min-height: 40px;
+    position: absolute; left: 24px; top: 0;
+    height: 60px; width: auto; object-fit: contain;
   }
   .brand .wordmark {
     font-size: 15px; font-weight: 650; letter-spacing: -.01em; color: var(--text);
@@ -119,9 +120,9 @@
   /* Layout */
   .shell { display: flex; align-items: flex-start; }
   .sidebar {
-    position: sticky; top: 54px; align-self: flex-start;
+    position: sticky; top: 60px; align-self: flex-start;
     width: 188px; flex-shrink: 0; padding: 24px 14px;
-    height: calc(100vh - 54px);
+    height: calc(100vh - 60px);
   }
   .sidebar .nav-label {
     font-size: 10.5px; font-weight: 650; text-transform: uppercase;
@@ -138,7 +139,7 @@
   .sidebar a .ico { width: 15px; text-align: center; opacity: .9; }
 
   main { flex: 1; min-width: 0; padding: 28px 32px 80px; max-width: 1280px; }
-  section { scroll-margin-top: 76px; margin-bottom: 44px; }
+  section { scroll-margin-top: 72px; margin-bottom: 44px; }
   .sec-head { margin-bottom: 18px; }
   .sec-head h2 {
     font-size: 19px; font-weight: 680; margin: 0 0 3px;
@@ -227,6 +228,32 @@
     letter-spacing: .07em; color: var(--text-3);
   }
   .wl-cross b { color: var(--cross); font-weight: 650; }
+
+  /* Per-workload data table */
+  .wl-table-wrap {
+    grid-column: 1 / -1; margin-top: 14px; overflow-x: auto;
+  }
+  .wl-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .wl-table th {
+    font-size: 10.5px; font-weight: 650; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .04em; padding: 0 8px 8px;
+    text-align: right; white-space: nowrap;
+  }
+  .wl-table th.rowhdr { text-align: left; padding-left: 2px; }
+  .wl-table td {
+    padding: 7px 8px; text-align: right; white-space: nowrap;
+    border-top: 1px solid var(--border); font-variant-numeric: tabular-nums;
+  }
+  .wl-table td.rowhdr { text-align: left; padding-left: 2px; }
+  .wl-table .srv-name {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-weight: 600; font-size: 13px; color: var(--text);
+  }
+  .wl-table .srv-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .wl-table .v-p99 { font-weight: 600; font-size: 12.5px; color: var(--text); }
+  .wl-table .v-rps { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
+  .wl-table .v-warn { color: #c2410c; font-weight: 700; margin-left: 3px; cursor: help; }
 
   /* Legend */
   .legend {
@@ -594,9 +621,38 @@ function makeWorkloadCharts(w, container) {
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
-    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>`;
+    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>
+    <div class="wl-table-wrap">${workloadTableHtml(w)}</div>`;
   build('p99_median', true, 'ms', idLat);
   build('rps_median', false, 'req/s', idRps);
+}
+
+/* ===== PER-WORKLOAD DATA TABLE ===== */
+const fmtP99 = (v) => v == null ? null : `${v} ms`;
+const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
+function workloadTableHtml(w, highlightServer) {
+  let head = '<thead><tr><th class="rowhdr">Server</th>';
+  DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
+  head += '</tr></thead>';
+  let body = '<tbody>';
+  DATA.servers.forEach(s => {
+    const hl = (highlightServer && s === highlightServer) ? ' class="hl-row"' : '';
+    body += `<tr${hl}><td class="rowhdr"><span class="srv-name"><span class="srv-dot" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span></td>`;
+    DATA.concurrencies.forEach(c => {
+      const cc = cell(s, w, c);
+      if (!cc || (cc.p99_median == null && cc.rps_median == null)) {
+        body += `<td><span class="v-miss">&ndash;</span></td>`;
+        return;
+      }
+      const p99 = fmtP99(cc.p99_median);
+      const rps = fmtRps(cc.rps_median);
+      const warn = cc.errors ? `<span class="v-warn" title="${cc.errors} errors at this concurrency">&#9888;</span>` : '';
+      body += `<td><span class="v-p99">${p99 != null ? p99 : '&ndash;'}${warn}</span><span class="v-rps">${rps != null ? rps : ''}</span></td>`;
+    });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  return `<table class="wl-table">${head + body}</table>`;
 }
 
 /* ===== GROUP SECTIONS ===== */
