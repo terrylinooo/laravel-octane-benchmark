@@ -52,7 +52,7 @@ haben (non-2xx / Timeouts), werden markiert und niemals stillschweigend mit eing
 
 | Kontrolle | Wert | Warum |
 |---|---|---|
-| Workers | **durchlaufen** (`WORKER_COUNTS`, Standard ~2/cpu und sein ×2 → `4 8` auf dem 2-cpu-Runner); FPM `max_children` abgeglichen | eine Matrix-Dimension — sieh, wie jeder Server mit Workern skaliert. Gleiche Anzahl für jeden Server (inkl. der FPM-Kontrolle) pro Durchlauf |
+| Workers | **durchlaufen** (`WORKER_COUNTS`, Standard ~2/cpu und sein ×2 → `4 8` auf dem 2-cpu-Runner); FPM `max_children` abgeglichen | eine Matrix-Dimension — sieh, wie jeder Server mit Workern skaliert. Gleiche Anzahl für jeden Server (inkl. der FPM-Kontrolle) pro Durchlauf; mehr Worker können langsamer sein, sobald die CPU überbucht ist |
 | CPU | **die untere Hälfte des Hosts** — `cpus=2`, `cpuset=0-1` auf dem 4-Kern-Runner (`cpus=4`, `cpuset=0-3` auf einem 8-Kern-Host) | jeder Server bekommt dieselben Kerne; die SUT-cpu-Anzahl wird in den Manifest-Caps festgehalten |
 | Lastgenerator | **`wrk` auf der oberen Hälfte des Hosts** (`cpuset=2-3` auf dem Runner, `4-7` bei 8 Kernen) — disjunkt von der SUT | der Generator ist **immer isoliert**: er stiehlt der SUT nie die CPU. Pro Zelle als `generator_isolated` festgehalten |
 | Memory | `mem_limit=4g` (env `MEM_LIMIT`) | großzügige **gleiche** Obergrenze — greift auf dem 16-GB-Runner nie, sodass kein Server OOM-bestraft wird und Peak RSS den echten Höchststand liest (nicht gedeckelt). Setze `MEM_LIMIT=512m` für ein Small-VPS-Szenario |
@@ -69,10 +69,11 @@ Geschwister.
 `benchmark.sh` **teilt den Host in zwei Hälften**: die SUT bekommt die unteren Kerne, der
 `wrk`-Generator die oberen Kerne, sodass der Generator **immer isoliert** ist (er stiehlt der
 SUT nie die CPU). Auf dem 4-Kern-Runner bedeutet das, dass die **SUT 2 cpus** hat (`cpuset 0-1`)
-und `wrk` auf `2-3` läuft; auf einem 8-Kern-Host bekommt die SUT 4 cpus (`0-3`) und `wrk` `4-7`.
+und mit `cpus=2` sowie `mem_limit=4g` läuft, also wie ein Docker-begrenzter 2-CPU-/4-GB-Server;
+`wrk` läuft auf `2-3`; auf einem 8-Kern-Host bekommt die SUT 4 cpus (`0-3`) und `wrk` `4-7`.
 Der Kompromiss ist, dass die SUT nur **die halbe Maschine** bekommt — auf dem Standard-Runner
-gelten die Berichte also für einen **2-cpu-Server**, festgehalten in den Manifest-Caps
-(`cpus=2`). Da geteilte CI-Runner immer noch lärmende Nachbarn sind, lies die Zahlen als
+gelten die Berichte also für einen **2-cpu-/4-GB-Server**, festgehalten in den Manifest-Caps
+(`cpus=2`, `mem=4g`). Da geteilte CI-Runner immer noch lärmende Nachbarn sind, lies die Zahlen als
 **ausschließlich relativ**.
 
 ## Workloads
@@ -124,6 +125,12 @@ Anpassbar per env: `SERVERS`, `WORKLOADS`, `CONCURRENCIES`, `WORKER_COUNTS`, `RU
 Nebenläufigkeit** vor seinen Läufen aufgewärmt, und `wrk --timeout` (Standard 15s) lässt eine
 langsame, gesättigte Zelle messen, statt sie als Fehler zu zensieren.
 
+Standardmäßig testet `benchmark.sh` ungefähr `2 * SUT_CPUS` Worker und danach die doppelte Anzahl.
+Auf dem Standard-Runner mit 4 vCPU bekommt die SUT 2 CPUs, daher ist der Standard-Worker-Sweep `4 8`.
+Wenn 8 Worker weniger Durchsatz oder schlechtere p99 als 4 zeigen, ist das ein gültiges Ergebnis:
+meist fügen zusätzliche PHP-Worker Scheduler-Contention, Cache-Druck oder DB-/Socket-Contention hinzu,
+ohne echte CPU-Kapazität zu erhöhen.
+
 ## Wie es funktioniert
 
 ```
@@ -164,28 +171,21 @@ billiger geworden wäre.
   gewinnt) ist der übertragbare Befund.
 - **Pinning-Selbstcheck.** Wenn der Host `--cpuset-cpus` nicht respektiert, wird jede Zelle als
   `pinning=unverified` markiert und das Ergebnis nicht als generator-isoliert präsentiert.
-- **2-cpu-SUT auf dem 4-Kern-Runner.** Um den Generator isoliert zu halten, wird der Host
-  halbiert — auf dem Standard-Runner ist also jeder Server ein **2-cpu**-Server (die anderen 2
-  Kerne treiben `wrk` an). Es ist im Manifest gekennzeichnet (`cpus=2`). Für eine 4-cpu-SUT *mit*
+- **2-cpu-/4-GB-SUT auf dem 4-Kern-Runner.** Um den Generator isoliert zu halten, wird der Host
+  halbiert — auf dem Standard-Runner ist also jeder getestete App-Docker-Container ein
+  **2-CPU-/4-GB**-Server (die anderen 2 Kerne treiben `wrk` an). Es ist im Manifest gekennzeichnet
+  (`cpus=2`, `mem=4g`). Für eine 4-cpu-SUT *mit*
   isoliertem Generator brauchst du einen 8-Kern-Host (die Aufteilung gibt der SUT dann 4 Kerne,
   `wrk` die anderen 4).
+- **Mehr Worker sind nicht automatisch besser.** Einen Abfall von 4 auf 8 Worker solltest du als
+  lokalen Sättigungspunkt dieser Maschine lesen, besonders bei CPU-bound Workloads oder der
+  Standard-Aufteilung mit 2-CPU-SUT.
 - **`cpu`-Gruppen-Kalibrierung.** Die Standardwerte zielen auf **~20-30ms pro Request**: schwer
   genug, um `/bench/hello` zu dominieren, leicht genug, dass ein Sweep bis zu Nebenläufigkeit
   128 auf einer 4-Kern-Maschine nicht in `wrk`-Timeouts sättigt. Stelle es auf deiner Maschine
   über `BENCH_HASH_ITERATIONS` (2000), `BENCH_MANDELBROT_DIM` (32) /
   `BENCH_MANDELBROT_MAX_ITER` (256) und `BENCH_JSON_ITERATIONS` (150) ein; `…_REPEAT` skaliert
   Mandelbrot für schwerere Hosts hoch.
-
-## Roadmap
-
-- **Phase 2 — lebender Benchmark:** der GitHub-Actions-Workflow führt die Matrix bereits auf
-  `ubuntu-24.04` aus und kann auf GitHub Pages deployen. Als Nächstes: ein `schedule:`-Trigger
-  zum automatischen Neu-Ausführen bei jedem PHP-/Octane-/Server-Release. (Vorbehalt: gehostete
-  Runner sind verrauscht; für eine **4-cpu**-SUT mit immer noch isoliertem Generator nutze einen
-  selbstgehosteten 8-Kern+-Runner — die Aufteilung gibt der SUT dann `0-3` und `wrk` `4-7`
-  automatisch.)
-- **Phase 3 — Decision Engine:** „sag mir die Form meiner App → welcher Server + welche
-  Worker-Anzahl."
 
 ## Aufbau
 
@@ -203,3 +203,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## License
+
+Dieser Laravel Octane Benchmark wird unter der MIT License veröffentlicht und von
+[Terry L.](https://terryl.in) gepflegt. Terry L. ist außerdem der Entwickler von Airygen,
+einem kostenlosen und leistungsstarken [WordPress SEO Plugin](https://www.airygen.com/de)
+für Teams, die strukturierte Content-Workflows und suchorientierte Publishing-Tools benötigen.
+
+## Offene Diskussion
+
+Serverless-Container-Dienste wie Google Cloud Run können sich anders verhalten als der feste
+2-CPU-Container in diesem Benchmark. Da solche Dienste meist nach zugewiesener Compute-Leistung
+abgerechnet werden und auf Hosts mit vielen zugrunde liegenden CPU cores laufen können, kann eine
+höhere Worker-Anzahl verfügbare Compute-Leistung theoretisch bis zum konfigurierten Service-Limit
+ausnutzen. In dieser Umgebung ist die Faustregel `workers = CPU x 2` nicht zwingend der richtige
+Standard; der worker count sollte anhand der tatsächlichen CPU-Zuweisung, des concurrency model,
+des Abrechnungsverhaltens und des latency target der Plattform abgestimmt werden.

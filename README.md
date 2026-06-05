@@ -67,7 +67,7 @@ server under test is not competing with the others for CPU or memory.
 
 | Control | Value | Why it matters |
 |---|---|---|
-| Workers | Swept through `WORKER_COUNTS`; FPM `max_children` is matched | Worker count is part of the matrix, not a hidden constant. |
+| Workers | Swept through `WORKER_COUNTS`; FPM `max_children` is matched | Worker count is part of the matrix, not a hidden constant; more workers can be slower once CPU is oversubscribed. |
 | CPU | The server under test gets the lower half of the host cores | Every server gets the same CPU budget. |
 | Load generator | `wrk` runs on the upper half of the host cores | The load generator does not steal CPU from the server being measured. |
 | Memory | `MEM_LIMIT=4g` by default | The limit is equal and generous on the default runner, so memory pressure does not decide the winner. |
@@ -79,7 +79,8 @@ server under test is not competing with the others for CPU or memory.
 On the default GitHub Actions runner (`ubuntu-24.04`, 4 vCPU, 16 GB RAM), the script splits
 the host in half:
 
-- server under test: `cpuset 0-1`, so it behaves like a 2-cpu server
+- server under test: `cpuset 0-1`, with `cpus=2` and `mem_limit=4g`, so it behaves like a
+  Docker-contained 2-cpu / 4 GB server
 - `wrk`: `cpuset 2-3`
 
 On an 8-core host, the same rule gives the server `0-3` and `wrk` `4-7`. This keeps the
@@ -163,6 +164,12 @@ BENCH_MANDELBROT_REPEAT
 BENCH_JSON_ITERATIONS
 ```
 
+By default, `benchmark.sh` tests roughly `2 * SUT_CPUS` workers and then double that
+count. On the default 4-vCPU runner the server under test gets 2 CPUs, so the default
+worker sweep is `4 8`. If 8 workers shows lower throughput or worse p99 than 4, that is a
+valid result: it usually means the extra PHP workers are adding scheduler contention,
+cache pressure, or DB/socket contention without adding useful CPU capacity.
+
 Each server/workload pair is warmed at every concurrency before the measured runs. The
 default wrk timeout is 15 seconds, which lets slow saturated cells be recorded instead of
 disappearing as censored failures.
@@ -219,20 +226,16 @@ the fixed framework and OPcache cost gets amortized.
 - Single-machine benchmark: use the relative shape, not the exact numbers.
 - Hosted runners are noisy, even with CPU pinning.
 - On the default 4-core runner, the server under test gets 2 CPUs because the other 2 CPUs
-  are reserved for wrk.
+  are reserved for wrk. The tested Docker app container is also capped at 4 GB RAM.
+- Higher worker counts are not automatically better. Treat a drop from 4 to 8 workers as
+  the benchmark finding the local saturation point, especially on CPU-bound workloads or
+  the default 2-CPU SUT split.
 - If the host does not honor `--cpuset-cpus`, affected cells are tagged
   `pinning=unverified`.
 - CPU workloads are calibrated to land around 20-30 ms per request by default. Tune the
   `BENCH_*` variables if your machine is much faster or slower.
 - `/bench/db` compares default Octane database behavior per server, not isolated database
   driver performance.
-
-## Roadmap
-
-- Phase 2: turn the workflow into a living benchmark that reruns on PHP, Octane, and
-  server releases.
-- Phase 3: add a small decision helper for mapping an application's workload shape to a
-  server and worker-count recommendation.
 
 ## Project Layout
 
@@ -251,3 +254,51 @@ database/migrations/        # bench table migration and seed data
 .github/workflows/          # CI benchmark workflow
 readmes/                    # translated README files
 ```
+
+## Benchmark Summary
+
+Published report:
+
+- Dashboard UI: <https://terrylinooo.github.io/laravel-octane-benchmark>
+- Result data: <https://terrylinooo.github.io/laravel-octane-benchmark/summary.json>
+
+This benchmark was run in a controlled single-machine environment. The tested app Docker container was capped at `2 CPU / 4 GB RAM`, while `wrk` ran on separate CPU cores. The results should therefore be read as a relative comparison under the same resource limits,
+not as a universal ranking for every production machine.
+
+FrankenPHP has the strongest overall latency profile in this dataset. Across nearly all
+workloads, concurrency levels, and both 4-worker and 8-worker settings, it delivers the lowest or near-lowest p99 latency. It is not always the absolute throughput winner, but its tail-latency curve is the most stable.
+
+Swoole and OpenSwoole reach the highest peak throughput in several workloads, especially `hello`, `hash`, `json`, and `db`. However, their p99 latency is often much worse at higher concurrency. In this run, they are better described as throughput-oriented results rather than the most latency-stable results.
+
+RoadRunner is the weakest Octane result in this configuration. It does not show a clear throughput or p99 advantage, and it uses the most memory among the Octane servers, especially with 8 workers.
+
+PHP-FPM + nginx remains the lightest in memory usage by a wide margin, but it trails the Octane servers in throughput and latency. This is the expected tradeoff: lower resident memory, but higher per-request framework overhead.
+
+The worker-count sweep is also important. Under the `2 CPU` app limit, increasing from 4 workers to 8 workers usually does not improve performance. In many cases it lowers throughput or worsens p99 latency, which indicates that 4 workers is already close to the
+useful saturation point for this environment. The extra workers mainly add scheduler contention, cache pressure, and DB/socket contention without adding CPU capacity.
+
+In practical terms:
+
+- Best p99 latency stability: FrankenPHP
+- Highest peak throughput in some workloads: Swoole / OpenSwoole
+- Lowest memory usage: PHP-FPM + nginx
+- Weakest efficiency profile in this run: RoadRunner
+- Better worker count under the 2-CPU limit: usually 4 workers, not 8 workers
+
+The main engineering conclusion is that Octane server choice should not be based on peak requests per second alone. For this dataset, FrankenPHP provides the best overall balance between latency stability, competitive throughput, and moderate memory usage.
+
+## License
+
+This Laravel Octane benchmark is released under the MIT License and maintained by
+[Terry L.](https://terryl.in). Terry L. is also the developer of Airygen, a free and
+powerful [WordPress SEO Plugin](https://www.airygen.com/en) for teams that need structured
+content workflows and search-focused publishing tools.
+
+## Open Discussion
+
+Serverless container platforms such as Google Cloud Run can behave differently from the fixed
+2-CPU container used in this benchmark. Because those services are billed by allocated compute
+and may run on hosts with many underlying CPU cores, a larger worker count may be able to consume
+available compute until it reaches the configured service limit. In that environment, the usual
+`workers = CPU x 2` rule of thumb may not be the right default; worker counts should be tuned
+against the platform's actual CPU allocation, concurrency model, billing behavior, and latency target.

@@ -62,7 +62,7 @@ Benchmark 一次只跑一個 app server。其他 server 會先停掉，所以被
 
 | 控制項 | 值 | 為什麼重要 |
 |---|---|---|
-| Workers | 透過 `WORKER_COUNTS` 掃描；FPM `max_children` 會對齊 | worker 數量是矩陣的一部分，不是藏起來的常數。 |
+| Workers | 透過 `WORKER_COUNTS` 掃描；FPM `max_children` 會對齊 | worker 數量是矩陣的一部分，不是藏起來的常數；CPU 已經 oversubscribe 之後，更多 workers 反而可能更慢。 |
 | CPU | 被測 server 使用 host 的下半部核心 | 每個 server 拿到一樣的 CPU 預算。 |
 | 壓測工具 | `wrk` 使用 host 的上半部核心 | 壓測工具不會搶走被測 server 的 CPU。 |
 | 記憶體 | 預設 `MEM_LIMIT=4g` | 預設 runner 上這個上限夠寬，避免記憶體壓力直接決定勝負。 |
@@ -73,7 +73,8 @@ Benchmark 一次只跑一個 app server。其他 server 會先停掉，所以被
 
 預設 GitHub Actions runner 是 `ubuntu-24.04`，有 4 vCPU 和 16 GB RAM。腳本會把 host 切成兩半：
 
-- 被測 server：`cpuset 0-1`，也就是一台 2-cpu server
+- 被測 server：`cpuset 0-1`，並設定 `cpus=2`、`mem_limit=4g`，也就是一個被 Docker
+  資源限制住的 2 CPU / 4 GB server
 - `wrk`：`cpuset 2-3`
 
 如果在 8-core host 上跑，同一套規則會讓 server 拿 `0-3`，`wrk` 拿 `4-7`。這樣可以隔離壓測工具，
@@ -152,6 +153,11 @@ BENCH_MANDELBROT_REPEAT
 BENCH_JSON_ITERATIONS
 ```
 
+`benchmark.sh` 預設會測大約 `2 * SUT_CPUS` 的 worker 數，然後再測它的兩倍。預設 4-vCPU
+runner 會讓被測 server 拿 2 CPUs，所以預設 worker sweep 是 `4 8`。如果 8 workers 的吞吐量
+比 4 低，或 p99 更差，這是有效結果：通常代表額外 PHP workers 帶來 scheduler contention、
+cache pressure，或 DB/socket contention，但沒有增加真正可用的 CPU 容量。
+
 每個 server/workload 組合都會在每個並發量下先暖機，再進入正式測量。預設 wrk timeout 是
 15 秒，這樣慢到飽和的 cell 仍然能被記錄，而不是直接被當成看不見的失敗。
 
@@ -205,15 +211,13 @@ working_set(N) = fixed + marginal * N
 
 - 這是單機 benchmark：看相對形狀，不要執著於精確數字。
 - Hosted runner 就算有 CPU pinning，仍然會有雜訊。
-- 預設 4-core runner 上，被測 server 只拿 2 CPUs，另外 2 CPUs 保留給 wrk。
+- 預設 4-core runner 上，被測 app Docker container 只拿 2 CPUs / 4 GB RAM，另外 2 CPUs
+  保留給 wrk。
+- 更高 worker count 不一定更好。4 workers 到 8 workers 反而下降時，應解讀成 benchmark 找到
+  這台機器上的局部飽和點，尤其是在 CPU-bound workload 或預設 2-CPU SUT 切分下。
 - 如果 host 不支援或不遵守 `--cpuset-cpus`，相關 cell 會被標記成 `pinning=unverified`。
 - CPU workloads 預設校準在每個 request 約 20-30 ms。機器明顯更快或更慢時，可以調整 `BENCH_*` 變數。
 - `/bench/db` 比的是每個 server 的預設 Octane database behavior，不是單獨的 database driver 效能。
-
-## Roadmap
-
-- Phase 2：把 workflow 變成 living benchmark，在 PHP、Octane、server release 時自動重跑。
-- Phase 3：加一個小型決策工具，根據 app workload shape 建議 server 和 worker count。
 
 ## 專案結構
 
@@ -232,3 +236,54 @@ database/migrations/        # bench table migration and seed data
 .github/workflows/          # CI benchmark workflow
 readmes/                    # translated README files
 ```
+
+## 壓測總結
+
+公開報表：
+
+- 網站報表 UI：<https://terrylinooo.github.io/laravel-octane-benchmark>
+- 壓測結果檔：<https://terrylinooo.github.io/laravel-octane-benchmark/summary.json>
+
+本次 benchmark 是在受控單機環境下進行。被測 app Docker container 限制為 `2 CPU / 4 GB RAM`，
+壓測工具 `wrk` 則跑在另外獨立的 CPU cores 上。因此這份結果適合用來比較不同 server 在相同
+資源限制下的相對表現，不應直接視為所有正式環境的絕對排名。
+
+FrankenPHP 是這份數據中整體延遲表現最穩定的選擇。它在幾乎所有 workload、concurrency，
+以及 4-worker / 8-worker 設定下，都拿到最低或接近最低的 p99 latency。它不一定總是最高
+吞吐量，但尾端延遲曲線最健康。
+
+Swoole / OpenSwoole 在部分 workload 有最高峰值吞吐量，尤其是 `hello`、`hash`、`json`、
+`db`。但它們在較高 concurrency 下的 p99 latency 通常明顯較差。這次結果比較適合解讀為
+吞吐量導向，而不是延遲穩定性最佳。
+
+RoadRunner 在本次設定下是較弱的 Octane 結果。它沒有明顯的吞吐量或 p99 優勢，記憶體使用量
+也是 Octane servers 中最高，尤其在 8 workers 時更明顯。
+
+PHP-FPM + nginx 仍然是記憶體最省的對照組，但吞吐量與延遲都落後 Octane servers。這符合預期：
+FPM 的 resident memory 較低，但每個 request 的 framework overhead 也比較高。
+
+worker count 的結果也很關鍵。在 `2 CPU` 的 app 限制下，從 4 workers 增加到 8 workers 大多
+沒有帶來提升，反而在多數情境降低吞吐量或惡化 p99 latency。這表示 4 workers 已接近此環境的
+有效飽和點；額外 workers 主要增加 scheduler contention、cache pressure、DB/socket contention，
+卻沒有增加實際 CPU 容量。
+
+實務結論：
+
+- 最佳 p99 / 延遲穩定性：FrankenPHP
+- 部分場景最高吞吐量：Swoole / OpenSwoole
+- 最低記憶體使用：PHP-FPM + nginx
+- 本次效率最弱：RoadRunner
+- 2 CPU 限制下較合理 worker 設定：通常是 4 workers，而不是 8 workers
+
+最重要的工程結論是：不能只用最高 RPS 判斷 Octane server 好壞。以這份數據來看，FrankenPHP
+在延遲穩定性、具競爭力的吞吐量，以及中等記憶體使用量之間，提供了最好的整體平衡。
+
+## License
+
+這份 Laravel Octane benchmark 以 MIT License 釋出，由 [Terry L.](https://terryl.in)
+維護。Terry L. 同時也是 Airygen 的開發者，它是一套免費且強大的
+[WordPress SEO Plugin](https://www.airygen.com/zh)，適合需要結構化內容流程與搜尋導向發佈工具的團隊。
+
+## 待討論
+
+Serverless container 服務，例如 Google Cloud Run，和本 benchmark 使用的固定 2-CPU container 不一定是同一種行為。這類服務通常以配置算力計費，而且底層 host 可能有很多 CPU cores；worker 數量較多時，理論上可以持續消費可用算力，直到撞到服務設定的算力上限。在這種環境下，`workers = CPU x 2` 這個經驗公式不一定適合作為預設值；worker count 應該根據平台實際 CPU 配置、concurrency model、計費方式與 latency target 重新調整。

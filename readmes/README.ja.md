@@ -50,7 +50,7 @@ FrankenPHP にはそれぞれ異なるトレードオフがあり、向いてい
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **スイープ**（`WORKER_COUNTS`、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは `4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数 |
+| Workers | **スイープ**（`WORKER_COUNTS`、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは `4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
 | CPU | **ホストの下半分**—4 コアランナーで `cpus=2`、`cpuset=0-1`（8 コアホストでは `cpus=4`、`cpuset=0-3`） | どのサーバーも同じコアを得る。SUT の cpu 数はマニフェストの上限に記録される |
 | Load generator | **ホストの上半分での `wrk`**（ランナーでは `cpuset=2-3`、8 コアでは `4-7`）—SUT とは交わらない | 生成ツールは **常に分離されている**。SUT の CPU を決して奪わない。セルごとに `generator_isolated` として記録される |
 | Memory | `mem_limit=4g`（env `MEM_LIMIT`） | 寛大で **均等な** 上限—16 GB ランナーでは決して縛られないため、どのサーバーも OOM ペナルティを受けず、ピーク RSS は真の最高水位を読み取る（クランプされない）。小規模 VPS シナリオには `MEM_LIMIT=512m` を設定 |
@@ -65,9 +65,10 @@ FrankenPHP にはそれぞれ異なるトレードオフがあり、向いてい
 **デフォルト環境: GitHub Actions `ubuntu-24.04` ランナー（4 vCPU / 16 GB RAM）。**
 `benchmark.sh` は **ホストを半分に分割** します。SUT は下位コアを、`wrk` 生成ツールは上位コアを
 得るので、生成ツールは **常に分離されています**（SUT の CPU を決して奪わない）。4 コアランナーでは、
-**SUT は 2 cpus**（`cpuset 0-1`）で `wrk` は `2-3` で動きます。8 コアホストでは SUT が 4 cpus（`0-3`）、
+**SUT は 2 cpus**（`cpuset 0-1`）で、`cpus=2`、`mem_limit=4g` が設定されます。つまり Docker により
+2 CPU / 4 GB に制限されたサーバーで、`wrk` は `2-3` で動きます。8 コアホストでは SUT が 4 cpus（`0-3`）、
 `wrk` が `4-7` を得ます。トレードオフは、SUT が **箱の半分しか** 得られないこと—なので、デフォルト
-ランナーではレポートは **2-cpu サーバー** についてのもので、マニフェストの上限に記録されます（`cpus=2`）。
+ランナーではレポートは **2-cpu / 4 GB サーバー** についてのもので、マニフェストの上限に記録されます（`cpus=2`、`mem=4g`）。
 共有 CI ランナーは依然として騒がしい隣人なので、数値は **相対的なものとしてのみ** 読んでください。
 
 ## Workloads
@@ -120,6 +121,11 @@ env で調整可能: `SERVERS`、`WORKLOADS`、`CONCURRENCIES`、`WORKER_COUNTS`
 ウォームアップされ、`wrk --timeout`（デフォルト 15s）により、飽和した遅いセルもエラーとして打ち切らず
 計測できます。
 
+`benchmark.sh` はデフォルトでおよそ `2 * SUT_CPUS` のワーカー数と、その 2 倍をテストします。
+デフォルトの 4-vCPU ランナーでは SUT が 2 CPUs を得るため、デフォルトの worker sweep は `4 8` です。
+8 workers のスループットが 4 より低い、または p99 が悪い場合も有効な結果です。通常は、追加の PHP
+workers が scheduler contention、cache pressure、DB/socket contention を増やし、有効な CPU 容量を増やしていないことを示します。
+
 ## How it works
 
 ```
@@ -159,25 +165,19 @@ python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
   （どこで誰が勝つか）です。
 - **Pinning セルフチェック。** ホストが `--cpuset-cpus` を尊重しない場合、すべてのセルは
   `pinning=unverified` とタグ付けされ、結果は生成ツール分離として提示されません。
-- **4 コアランナー上の 2-cpu SUT。** 生成ツールを分離するため、ホストは半分に分割されます—
-  なのでデフォルトランナーでは各サーバーは **2-cpu** サーバーです（残りの 2 コアが `wrk` を駆動）。
-  マニフェストにラベル付けされます（`cpus=2`）。生成ツールを分離した *まま* の 4-cpu SUT には
+- **4 コアランナー上の 2-cpu / 4 GB SUT。** 生成ツールを分離するため、ホストは半分に分割されます—
+  なのでデフォルトランナーでは各 app Docker container は **2 CPU / 4 GB** サーバーです（残りの 2 コアが `wrk` を駆動）。
+  マニフェストにラベル付けされます（`cpus=2`、`mem=4g`）。生成ツールを分離した *まま* の 4-cpu SUT には
   8 コアホストが必要です（その分割では SUT に 4 コア、`wrk` に残りの 4 コアが与えられる）。
+- **ワーカー数が多いほど速いとは限らない。** 4 workers から 8 workers で低下する場合は、このマシン上の
+  局所的な飽和点を benchmark が見つけたと解釈してください。特に CPU-bound workload やデフォルトの
+  2-CPU SUT 分割ではそうです。
 - **`cpu` グループのキャリブレーション。** デフォルトは **~20-30ms/リクエスト** を狙います。
   `/bench/hello` を支配するのに十分重く、4 コアの箱で並行数 128 までのスイープが `wrk` の
   タイムアウトに飽和しない程度に軽い。`BENCH_HASH_ITERATIONS`（2000）、
   `BENCH_MANDELBROT_DIM`（32）/ `BENCH_MANDELBROT_MAX_ITER`（256）、
   `BENCH_JSON_ITERATIONS`（150）で自分のマシンに合わせて調整してください。`…_REPEAT` はより
   重いホスト向けにマンデルブロをスケールアップします。
-
-## Roadmap
-
-- **Phase 2 — 生きたベンチマーク:** GitHub Actions ワークフローはすでに `ubuntu-24.04` 上で
-  マトリクスを実行し、GitHub Pages にデプロイできます。次に: 各 PHP/Octane/サーバーのリリースごとに
-  自動で再実行する `schedule:` トリガー。（注意点: ホスト型ランナーは騒がしいため、生成ツールを
-  分離したままの **4-cpu** SUT には、セルフホストの 8 コア以上のランナーを使ってください—その分割は
-  SUT に `0-3`、`wrk` に `4-7` を自動的に与えます。）
-- **Phase 3 — 意思決定エンジン:** 「自分のアプリの形を教えて → どのサーバー + ワーカー数」。
 
 ## Layout
 
@@ -195,3 +195,19 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## License
+
+この Laravel Octane benchmark は MIT License で公開され、[Terry L.](https://terryl.in)
+によってメンテナンスされています。Terry L. は Airygen の開発者でもあります。Airygen は、
+構造化されたコンテンツワークフローと検索を意識した公開ツールを必要とするチーム向けの、
+無料で強力な [WordPress SEO Plugin](https://www.airygen.com/ja) です。
+
+## 検討中
+
+Google Cloud Run などの serverless container サービスは、この benchmark で使っている固定 2-CPU
+container とは挙動が異なる場合があります。これらのサービスは通常、割り当てられた compute に対して
+課金され、基盤 host には多くの CPU cores があることがあります。worker 数を増やすと、理論上は設定された
+サービス上限に達するまで利用可能な compute を消費できる可能性があります。この環境では、
+`workers = CPU x 2` という経験則が最適なデフォルトとは限りません。worker count は、実際の CPU
+割り当て、concurrency model、課金方式、latency target に合わせて調整すべきです。
