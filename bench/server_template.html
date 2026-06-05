@@ -140,6 +140,7 @@
     padding: 3px 9px; border-radius: 7px; white-space: nowrap;
   }
   .pill b { color: var(--text); font-weight: 600; }
+  .pill .cap-hi { color: #2563eb; font-weight: 760; }
   .pill.warn { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
   .pill.info { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 
@@ -287,9 +288,20 @@
   /* ===== Workload cards ===== */
   .group-cards { display: flex; flex-direction: column; gap: 18px; }
   .wl-card { }
-  .wl-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .wl-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
   .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
   .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
+  .lat-select {
+    appearance: none; background: var(--card); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 6px 28px 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+    margin-left: auto;
+  }
+  .lat-select:hover { border-color: var(--srv-color, var(--accent)); }
   .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .chart-box { min-width: 0; }
   .chart-box .ct {
@@ -332,9 +344,11 @@
   }
   .wl-table .srv-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .wl-table .v-p99 { font-weight: 600; font-size: 12.5px; color: var(--text); }
+  .wl-table .v-lat { display: block; font-size: 11px; color: var(--text-2); font-weight: 500; }
   .wl-table .v-rps { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-err { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-err.bad { color: #c2410c; font-weight: 700; }
   .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
-  .wl-table .v-warn { color: #c2410c; font-weight: 700; margin-left: 3px; cursor: help; }
   .wl-table tr.hl-row td { background: var(--accent-soft); }
   .wl-table tr.hl-row .srv-name,
   .wl-table tr.hl-row .v-p99 { font-weight: 720; }
@@ -531,6 +545,13 @@ const WL_DESC = {
 const srvLabel = (s) => SRV_LABEL[s] || s;
 const srvColor = (s) => COLORS[s] || "#888888";
 const SRV_C = srvColor(SERVER);
+const LATENCY_METRICS = [
+  { key: 'p50_median', label: 'p50' },
+  { key: 'p90_median', label: 'p90' },
+  { key: 'p95_median', label: 'p95' },
+  { key: 'p99_median', label: 'p99' },
+];
+const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
 
 /* cell() may be undefined for sparse data -> return null, skip safely */
 const cell = (s, w, c) => {
@@ -611,6 +632,12 @@ function renderNav() {
     sel.addEventListener('change', function () { window.location.href = this.value; });
   }
 }
+function formatPillValue(k, v) {
+  const s = String(v);
+  if (k !== 'Caps') return s;
+  return s.replace(/(cpus=[^,]+|mem=[^,]+)/g, '<span class="cap-hi">$1</span>');
+}
+
 function renderPills() {
   const m = DATA.manifest || {};
   const el = document.getElementById('manifestPills');
@@ -618,7 +645,7 @@ function renderPills() {
     ['PHP', m.php], ['Laravel', m.laravel], ['Octane', m.octane],
     ['Workers', m.workers], ['Caps', m.caps], ['Commit', m.commit], ['Host', m.host]
   ].filter(([k, v]) => v != null);
-  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${v}</b></span>`).join('');
+  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${formatPillValue(k, v)}</b></span>`).join('');
   if (m.generator_isolated === false) {
     html += `<span class="pill warn" title="Load generator shared CPU with the app">&#9888; co-resident generator</span>`;
   } else if (m.generator_isolated === true) {
@@ -797,29 +824,51 @@ function buildWorkloadChart(canvasId, w, metric, lower, yTitle) {
   const ch = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: baseLineOptions(yTitle, metric) });
   ch.config._serverChart = true;
   charts.push(ch);
+  return ch;
 }
 
 function makeWorkloadCharts(w, container) {
   const idLat = `lat-${w}`, idRps = `rps-${w}`;
   container.querySelector('.chart-pair').innerHTML = `
     <div class="chart-box">
-      <div class="ct">p99 latency <span class="hint">lower is better &darr;</span></div>
+      <div class="ct"><span class="lat-chart-title">Latency</span> <span class="hint">lower is better &darr;</span></div>
       <div class="chart-wrap"><canvas id="${idLat}"></canvas></div>
     </div>
     <div class="chart-box">
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
-    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>
+    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, DEFAULT_LATENCY_METRIC.key, true)}</span></div>
     <div class="wl-table-wrap">${workloadTableHtml(w, SERVER)}</div>`;
-  buildWorkloadChart(idLat, w, 'p99_median', true, 'ms');
+  const latChart = buildWorkloadChart(idLat, w, DEFAULT_LATENCY_METRIC.key, true, 'ms');
   buildWorkloadChart(idRps, w, 'rps_median', false, 'req/s');
+
+  const select = container.querySelector('.lat-select');
+  const title = container.querySelector('.lat-chart-title');
+  const crossLabel = container.querySelector('.wl-cross .lab');
+  const crossText = container.querySelector('.wl-cross span:last-child');
+  const tableWrap = container.querySelector('.wl-table-wrap');
+  if (select) {
+    select.value = DEFAULT_LATENCY_METRIC.key;
+    select.addEventListener('change', () => {
+      const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
+      latChart.data.datasets.forEach(ds => {
+        ds.data = DATA.concurrencies.map(c => { const cc = cell(ds._server, w, c); return cc ? cc[metric.key] : null; });
+      });
+      latChart.options = baseLineOptions('ms', metric.key);
+      title.textContent = 'Latency';
+      crossLabel.textContent = 'lead';
+      crossText.innerHTML = crossoverCaption(w, metric.key, true);
+      tableWrap.innerHTML = workloadTableHtml(w, SERVER, metric);
+      latChart.update();
+    });
+  }
 }
 
 /* ===== PER-WORKLOAD DATA TABLE ===== */
-const fmtP99 = (v) => v == null ? null : `${v} ms`;
+const fmtMs = (v) => v == null ? null : `${v} ms`;
 const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
-function workloadTableHtml(w, highlightServer) {
+function workloadTableHtml(w, highlightServer, metric = DEFAULT_LATENCY_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -829,14 +878,14 @@ function workloadTableHtml(w, highlightServer) {
     body += `<tr${hl}><td class="rowhdr"><span class="srv-name"><span class="srv-dot" style="background:${srvColor(s)}"></span>${srvLabel(s)}</span></td>`;
     DATA.concurrencies.forEach(c => {
       const cc = cell(s, w, c);
-      if (!cc || (cc.p99_median == null && cc.rps_median == null)) {
+      if (!cc || (cc.p50_median == null && cc.p90_median == null && cc.p95_median == null && cc.p99_median == null && cc.rps_median == null)) {
         body += `<td><span class="v-miss">&ndash;</span></td>`;
         return;
       }
-      const p99 = fmtP99(cc.p99_median);
+      const lat = fmtMs(cc[metric.key]);
       const rps = fmtRps(cc.rps_median);
-      const warn = cc.errors ? `<span class="v-warn" title="${cc.errors} errors at this concurrency">&#9888;</span>` : '';
-      body += `<td><span class="v-p99">${p99 != null ? p99 : '&ndash;'}${warn}</span><span class="v-rps">${rps != null ? rps : ''}</span></td>`;
+      const errors = Number(cc.errors || 0);
+      body += `<td><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
     });
     body += '</tr>';
   });
@@ -870,8 +919,13 @@ function renderGroups() {
       card.className = 'card wl-card';
       card.innerHTML = `
         <div class="wl-head">
-          <span class="name">${w}</span>
-          <span class="desc">${WL_DESC[w] || ''}</span>
+          <div class="wl-title">
+            <span class="name">${w}</span>
+            <span class="desc">${WL_DESC[w] || ''}</span>
+          </div>
+          <select class="lat-select" aria-label="Latency percentile for ${w}">
+            ${LATENCY_METRICS.map(m => `<option value="${m.key}"${m.key === DEFAULT_LATENCY_METRIC.key ? ' selected' : ''}>${m.label}</option>`).join('')}
+          </select>
         </div>
         <div class="chart-pair"></div>`;
       wrap.appendChild(card);

@@ -10,13 +10,14 @@ done = function(summary, latency, requests)
     '__WRKJSON__{"requests":%d,"duration_s":%.3f,"bytes":%d,"rps":%.2f,' ..
     '"errors":{"connect":%d,"read":%d,"write":%d,"status":%d,"timeout":%d},' ..
     '"latency_ms":{"min":%.3f,"max":%.3f,"mean":%.3f,"stdev":%.3f,' ..
-    '"p50":%.3f,"p75":%.3f,"p90":%.3f,"p99":%.3f,"p99_9":%.3f}}',
+    '"p50":%.3f,"p75":%.3f,"p90":%.3f,"p95":%.3f,"p99":%.3f,"p99_9":%.3f}}',
     summary.requests, dur_s, summary.bytes, rps,
     summary.errors.connect, summary.errors.read, summary.errors.write,
     summary.errors.status, summary.errors.timeout,
     latency.min / 1000, latency.max / 1000, latency.mean / 1000, latency.stdev / 1000,
     latency:percentile(50) / 1000, latency:percentile(75) / 1000,
-    latency:percentile(90) / 1000, latency:percentile(99) / 1000,
+    latency:percentile(90) / 1000, latency:percentile(95) / 1000,
+    latency:percentile(99) / 1000,
     latency:percentile(99.9) / 1000
   )
   io.write(line .. "\n")

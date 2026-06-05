@@ -2,13 +2,13 @@
 """
 Aggregate raw benchmark cells into:
   - docs/summary.json   structured medians + ranges (machine-readable)
-  - RESULTS.md          markdown tables (per-workload rps + p99, plus peak RSS)
+  - RESULTS.md          markdown tables (per-workload rps + latency percentiles, plus peak RSS)
   - docs/index.html     self-contained Chart.js page (works from file:// and gh-pages)
 
 Pure stdlib. Reads results/*.json written by benchmark.sh.
 
 Median across runs is the headline; min/max show the spread so noise is visible.
-Cells that recorded any wrk errors are flagged, not hidden.
+Cells include total wrk error counts so failed requests stay visible beside latency.
 """
 import base64
 import glob
@@ -49,19 +49,26 @@ def aggregate(cells):
     out = {}
     for (server, workload, workers, conc), runs in groups.items():
         rps = [r["wrk"]["rps"] for r in runs]
-        p50 = [r["wrk"]["latency_ms"]["p50"] for r in runs]
-        p99 = [r["wrk"]["latency_ms"]["p99"] for r in runs]
+        lat = {k: [r["wrk"]["latency_ms"][k] for r in runs if k in r["wrk"]["latency_ms"]]
+               for k in ("p50", "p90", "p95", "p99")}
         errors = sum(sum(r["wrk"]["errors"].values()) for r in runs)
-        out[(server, workload, workers, conc)] = {
+        row = {
             "server": server, "workload": workload, "workers": workers, "concurrency": conc,
             "runs": len(runs),
             "rps_median": round(statistics.median(rps), 1),
             "rps_min": round(min(rps), 1), "rps_max": round(max(rps), 1),
-            "p50_median": round(statistics.median(p50), 2),
-            "p99_median": round(statistics.median(p99), 2),
-            "p99_min": round(min(p99), 2), "p99_max": round(max(p99), 2),
             "errors": errors,
         }
+        for p, values in lat.items():
+            if not values:
+                row[f"{p}_median"] = None
+                row[f"{p}_min"] = None
+                row[f"{p}_max"] = None
+                continue
+            row[f"{p}_median"] = round(statistics.median(values), 2)
+            row[f"{p}_min"] = round(min(values), 2)
+            row[f"{p}_max"] = round(max(values), 2)
+        out[(server, workload, workers, conc)] = row
     return out
 
 
@@ -188,18 +195,24 @@ def main():
                 lines.append(f"### `/bench/{w}`")
                 lines.append("")
                 header = "| Server | " + " | ".join(
-                    f"c{c} rps | c{c} p99 (ms)" for c in concs) + " |"
-                sep = "|" + "---|" * (1 + 2 * len(concs))
+                    f"c{c} rps | c{c} p50 | c{c} p90 | c{c} p95 | c{c} p99 | c{c} errors" for c in concs) + " |"
+                sep = "|" + "---|" * (1 + 6 * len(concs))
                 lines += [header, sep]
                 for s in servers:
                     row = [f"`{s}`"]
                     for c in concs:
                         d = cell(s, w, wk, c)
                         if not d:
-                            row += ["–", "–"]
+                            row += ["–", "–", "–", "–", "–", "–"]
                         else:
-                            flag = " ⚠️" if d["errors"] else ""
-                            row += [f"{d['rps_median']:.0f}{flag}", f"{d['p99_median']:.1f}"]
+                            row += [
+                                f"{d['rps_median']:.0f}",
+                                f"{d['p50_median']:.1f}" if d.get("p50_median") is not None else "–",
+                                f"{d['p90_median']:.1f}" if d.get("p90_median") is not None else "–",
+                                f"{d['p95_median']:.1f}" if d.get("p95_median") is not None else "–",
+                                f"{d['p99_median']:.1f}" if d.get("p99_median") is not None else "–",
+                                str(d["errors"]),
+                            ]
                     lines.append("| " + " | ".join(row) + " |")
                 lines.append("")
 
@@ -220,7 +233,7 @@ def main():
                 lines.append("| " + " | ".join(row) + " |")
             lines.append("")
 
-    lines += ["⚠️ = cell recorded wrk errors (non-2xx/timeout); its latency is not clean.", ""]
+    lines += ["`errors` = total wrk connect/read/write/status/timeout errors recorded for that cell.", ""]
     with open(os.path.join(ROOT, "RESULTS.md"), "w") as fh:
         fh.write("\n".join(lines))
 

@@ -140,6 +140,7 @@
     padding: 3px 9px; border-radius: 7px; white-space: nowrap;
   }
   .pill b { color: var(--text); font-weight: 600; }
+  .pill .cap-hi { color: #2563eb; font-weight: 760; }
   .pill.warn { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
   .pill.info { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 
@@ -284,9 +285,20 @@
   /* Workload cards */
   .group-cards { display: flex; flex-direction: column; gap: 18px; }
   .wl-card { }
-  .wl-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .wl-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
   .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
   .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
+  .lat-select {
+    appearance: none; background: var(--card); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 6px 28px 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+    margin-left: auto;
+  }
+  .lat-select:hover { border-color: var(--accent); }
   .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .chart-box { min-width: 0; }
   .chart-box .ct {
@@ -329,9 +341,11 @@
   }
   .wl-table .srv-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .wl-table .v-p99 { font-weight: 600; font-size: 12.5px; color: var(--text); }
+  .wl-table .v-lat { display: block; font-size: 11px; color: var(--text-2); font-weight: 500; }
   .wl-table .v-rps { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-err { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-err.bad { color: #c2410c; font-weight: 700; }
   .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
-  .wl-table .v-warn { color: #c2410c; font-weight: 700; margin-left: 3px; cursor: help; }
 
   /* Legend */
   .legend {
@@ -447,12 +461,22 @@
     <section id="summary">
       <div class="sec-head">
         <h2>Summary</h2>
-        <p>Lowest-p99 winner per workload &amp; concurrency, with headline stats. All comparisons are relative on identical hardware.</p>
+        <p>Lowest-latency winner per workload &amp; concurrency, with headline stats. All comparisons are relative on identical hardware.</p>
       </div>
       <div class="hero-grid">
         <div class="card">
-          <div class="card-title">Winner heatmap &mdash; lowest p99 latency</div>
-          <div class="card-sub">Each cell shows the server with the lowest median p99 at that concurrency.</div>
+          <div class="wl-head">
+            <div class="wl-title">
+              <div class="card-title">Winner heatmap &mdash; lowest latency</div>
+            </div>
+            <select class="lat-select" id="heatmapMetric" aria-label="Winner heatmap latency percentile">
+              <option value="p50_median">p50</option>
+              <option value="p90_median">p90</option>
+              <option value="p95_median">p95</option>
+              <option value="p99_median" selected>p99</option>
+            </select>
+          </div>
+          <div class="card-sub">Each cell shows the server with the lowest median latency at that concurrency.</div>
           <div class="table-scroll"><table class="heatmap" id="heatmap"></table></div>
         </div>
         <div class="kpis" id="kpis"></div>
@@ -498,6 +522,13 @@ const COLORS = {
   swoole: "#4ade80", openswoole: "#22d3ee", roadrunner: "#f59e0b",
   frankenphp: "#a78bfa", fpm: "#f87171"
 };
+const LATENCY_METRICS = [
+  { key: 'p50_median', label: 'p50' },
+  { key: 'p90_median', label: 'p90' },
+  { key: 'p95_median', label: 'p95' },
+  { key: 'p99_median', label: 'p99' },
+];
+const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
 const SRV_LABEL = {
   swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
   frankenphp: "FrankenPHP", fpm: "PHP-FPM"
@@ -563,6 +594,12 @@ function renderNavSelect() {
 }
 
 /* ===== TOP BAR PILLS ===== */
+function formatPillValue(k, v) {
+  const s = String(v);
+  if (k !== 'Caps') return s;
+  return s.replace(/(cpus=[^,]+|mem=[^,]+)/g, '<span class="cap-hi">$1</span>');
+}
+
 function renderPills() {
   const m = DATA.manifest || {};
   const el = document.getElementById('manifestPills');
@@ -570,7 +607,7 @@ function renderPills() {
     ['PHP', m.php], ['Laravel', m.laravel], ['Octane', m.octane],
     ['Workers', m.workers], ['Caps', m.caps], ['Commit', m.commit], ['Host', m.host]
   ].filter(([k, v]) => v != null);
-  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${v}</b></span>`).join('');
+  let html = items.map(([k, v]) => `<span class="pill"><span>${k}</span><b>${formatPillValue(k, v)}</b></span>`).join('');
   if (m.generator_isolated === false) {
     html += `<span class="pill warn" title="Load generator shared CPU with the app">&#9888; co-resident generator</span>`;
   } else if (m.generator_isolated === true) {
@@ -581,7 +618,7 @@ function renderPills() {
 }
 
 /* ===== HEATMAP ===== */
-function renderHeatmap() {
+function renderHeatmap(metric = DEFAULT_LATENCY_METRIC) {
   const t = document.getElementById('heatmap');
   let head = '<thead><tr><th class="rowhdr">Workload</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
@@ -594,7 +631,7 @@ function renderHeatmap() {
       let best = null, bestv = Infinity;
       DATA.servers.forEach(s => {
         const cc = cell(s, w, c);
-        if (cc && cc.p99_median != null && cc.p99_median < bestv) { bestv = cc.p99_median; best = s; }
+        if (cc && cc[metric.key] != null && cc[metric.key] < bestv) { bestv = cc[metric.key]; best = s; }
       });
       if (best == null) {
         body += `<td><span class="hpill" style="background:var(--pill-bg);color:var(--text-3)">&mdash;</span></td>`;
@@ -606,6 +643,16 @@ function renderHeatmap() {
   });
   body += '</tbody>';
   t.innerHTML = head + body;
+}
+
+function initHeatmapMetric() {
+  const select = document.getElementById('heatmapMetric');
+  if (!select) return;
+  select.value = DEFAULT_LATENCY_METRIC.key;
+  select.addEventListener('change', () => {
+    const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
+    renderHeatmap(metric);
+  });
 }
 
 /* ===== KPIs ===== */
@@ -728,28 +775,56 @@ function makeWorkloadCharts(w, container) {
     const ch = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: baseLineOptions(yTitle) });
     ch.config._serverChart = true;
     charts.push(ch);
+    return ch;
   }
 
   const idLat = `lat-${w}`, idRps = `rps-${w}`;
   container.querySelector('.chart-pair').innerHTML = `
     <div class="chart-box">
-      <div class="ct">p99 latency <span class="hint">lower is better &darr;</span></div>
+      <div class="ct"><span class="lat-chart-title">Latency</span> <span class="hint">lower is better &darr;</span></div>
       <div class="chart-wrap"><canvas id="${idLat}"></canvas></div>
     </div>
     <div class="chart-box">
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
-    <div class="wl-cross"><span class="lab">p99 lead</span> <span>${crossoverCaption(w, 'p99_median', true)}</span></div>
+    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, DEFAULT_LATENCY_METRIC.key, true)}</span></div>
     <div class="wl-table-wrap">${workloadTableHtml(w)}</div>`;
-  build('p99_median', true, 'ms', idLat);
+  const latChart = build(DEFAULT_LATENCY_METRIC.key, true, 'ms', idLat);
   build('rps_median', false, 'req/s', idRps);
+
+  const select = container.querySelector('.lat-select');
+  const title = container.querySelector('.lat-chart-title');
+  const crossLabel = container.querySelector('.wl-cross .lab');
+  const crossText = container.querySelector('.wl-cross span:last-child');
+  const tableWrap = container.querySelector('.wl-table-wrap');
+  if (select) {
+    select.value = DEFAULT_LATENCY_METRIC.key;
+    select.addEventListener('change', () => {
+      const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
+      const leaders = leaderSeq(metric.key, true);
+      const crossX = new Set();
+      for (let i = 1; i < leaders.length; i++) if (leaders[i] && leaders[i] !== leaders[i - 1]) crossX.add(i);
+      latChart.data.datasets.forEach(ds => {
+        const data = DATA.concurrencies.map(c => { const cc = cell(ds._server, w, c); return cc ? cc[metric.key] : null; });
+        ds.data = data;
+        ds.pointBackgroundColor = data.map((_, i) => crossX.has(i) ? '#fff' : COLORS[ds._server]);
+        ds.pointBorderWidth = data.map((_, i) => crossX.has(i) ? 3 : 1);
+        ds.pointRadius = data.map((_, i) => crossX.has(i) ? 5.5 : 3);
+      });
+      title.textContent = 'Latency';
+      crossLabel.textContent = 'lead';
+      crossText.innerHTML = crossoverCaption(w, metric.key, true);
+      tableWrap.innerHTML = workloadTableHtml(w, null, metric);
+      latChart.update();
+    });
+  }
 }
 
 /* ===== PER-WORKLOAD DATA TABLE ===== */
-const fmtP99 = (v) => v == null ? null : `${v} ms`;
+const fmtMs = (v) => v == null ? null : `${v} ms`;
 const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
-function workloadTableHtml(w, highlightServer) {
+function workloadTableHtml(w, highlightServer, metric = DEFAULT_LATENCY_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -759,14 +834,14 @@ function workloadTableHtml(w, highlightServer) {
     body += `<tr${hl}><td class="rowhdr"><span class="srv-name"><span class="srv-dot" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span></td>`;
     DATA.concurrencies.forEach(c => {
       const cc = cell(s, w, c);
-      if (!cc || (cc.p99_median == null && cc.rps_median == null)) {
+      if (!cc || (cc.p50_median == null && cc.p90_median == null && cc.p95_median == null && cc.p99_median == null && cc.rps_median == null)) {
         body += `<td><span class="v-miss">&ndash;</span></td>`;
         return;
       }
-      const p99 = fmtP99(cc.p99_median);
+      const lat = fmtMs(cc[metric.key]);
       const rps = fmtRps(cc.rps_median);
-      const warn = cc.errors ? `<span class="v-warn" title="${cc.errors} errors at this concurrency">&#9888;</span>` : '';
-      body += `<td><span class="v-p99">${p99 != null ? p99 : '&ndash;'}${warn}</span><span class="v-rps">${rps != null ? rps : ''}</span></td>`;
+      const errors = Number(cc.errors || 0);
+      body += `<td><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
     });
     body += '</tr>';
   });
@@ -792,8 +867,13 @@ function renderGroups() {
       card.className = 'card wl-card';
       card.innerHTML = `
         <div class="wl-head">
-          <span class="name">${w}</span>
-          <span class="desc">${WL_DESC[w] || ''}</span>
+          <div class="wl-title">
+            <span class="name">${w}</span>
+            <span class="desc">${WL_DESC[w] || ''}</span>
+          </div>
+          <select class="lat-select" aria-label="Latency percentile for ${w}">
+            ${LATENCY_METRICS.map(m => `<option value="${m.key}"${m.key === DEFAULT_LATENCY_METRIC.key ? ' selected' : ''}>${m.label}</option>`).join('')}
+          </select>
         </div>
         <div class="chart-pair"></div>`;
       wrap.appendChild(card);
@@ -888,7 +968,8 @@ function rebuildAll() {
   charts.forEach(c => c.destroy());
   charts.length = 0;
   document.getElementById('groupSections').innerHTML = '';
-  renderHeatmap();
+  const heatmapMetric = LATENCY_METRICS.find(m => m.key === document.getElementById('heatmapMetric')?.value) || DEFAULT_LATENCY_METRIC;
+  renderHeatmap(heatmapMetric);
   renderKpis();
   renderGroups();
   applyVisibility();
@@ -917,6 +998,7 @@ renderNavSelect();
 renderPills();
 renderWorkerToggle();
 renderHeatmap();
+initHeatmapMetric();
 renderKpis();
 renderLegend();
 renderGroups();
