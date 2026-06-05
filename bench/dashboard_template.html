@@ -3,9 +3,42 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Laravel Octane Benchmark</title>
+<title>Laravel Octane Benchmark: Swoole vs OpenSwoole vs RoadRunner vs FrankenPHP</title>
+<meta name="description" content="Interactive Laravel Octane benchmark report comparing Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM across p99 latency, throughput, worker counts, and memory usage." />
+<meta name="robots" content="index,follow" />
+<link rel="canonical" href="https://terrylinooo.github.io/laravel-octane-benchmark/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Laravel Octane Benchmark" />
+<meta property="og:title" content="Laravel Octane Benchmark: Swoole vs OpenSwoole vs RoadRunner vs FrankenPHP" />
+<meta property="og:description" content="Compare Laravel Octane servers by p99 latency, throughput, worker count behavior, and peak RSS under a controlled 2 CPU / 4 GB Docker benchmark." />
+<meta property="og:url" content="https://terrylinooo.github.io/laravel-octane-benchmark/" />
+<meta property="og:image" content="https://terrylinooo.github.io/laravel-octane-benchmark/laravel-bm.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Laravel Octane Benchmark" />
+<meta name="twitter:description" content="Interactive benchmark report for Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM." />
+<meta name="twitter:image" content="https://terrylinooo.github.io/laravel-octane-benchmark/laravel-bm.png" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Laravel Octane Benchmark",
+  "description": "Benchmark dataset and interactive report comparing Laravel Octane servers Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM by p99 latency, throughput, worker counts, and memory usage.",
+  "url": "https://terrylinooo.github.io/laravel-octane-benchmark/",
+  "license": "https://opensource.org/licenses/MIT",
+  "creator": {
+    "@type": "Person",
+    "name": "Terry L.",
+    "url": "https://terryl.in"
+  },
+  "distribution": {
+    "@type": "DataDownload",
+    "encodingFormat": "application/json",
+    "contentUrl": "https://terrylinooo.github.io/laravel-octane-benchmark/summary.json"
+  }
+}
+</script>
 <style>
   :root {
     --bg: #f7f8fa;
@@ -449,7 +482,7 @@
 </div>
 
 <footer class="site-footer">
-  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L</a> at <a href="https://www.airygen.com/en" target="_blank" rel="noopener">Airygen</a>
+  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L.</a>, developer of Airygen, a <a href="https://www.airygen.com/en" target="_blank" rel="noopener">WordPress SEO Plugin</a>
 </footer>
 
 <script>

@@ -4,7 +4,7 @@
 
 # Laravel Octane Benchmark
 
-Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoole**、**RoadRunner**、 **FrankenPHP**）を、従来型の **PHP-FPM + nginx** 対照群と比較ベンチマークし、 *それぞれがどこで勝つのか* を示す再現可能なハーネスです。
+Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoole**、**RoadRunner**、**FrankenPHP**）を、従来型の **PHP-FPM + nginx** 対照群と比較ベンチマークし、 *それぞれがどこで勝つのか* を示す再現可能なハーネスです。
 
 ほとんどの Octane ベンチマークは単一の「最速」値だけを公表し、互いに矛盾しています。ワークロード、ワーカー数、負荷生成ツール、ウォームかコールドかといった条件がこっそり異なっているにもかかわらず、それらをほとんど開示しないからです。本プロジェクトは、あらゆる交絡変数を固定し、そのすべてを開示し、**ワークロードごとのレイテンシ交差曲線**を公表します。結論は明確に「場合による—そして、どう場合によるのかを正確にここに示す。自分で実行してみてほしい」です。
 
@@ -12,7 +12,7 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 
 ## Results
 
-実行して `docs/index.html `（チャート）/ ` RESULTS.md `（テーブル）を開いてください。公開済みの実行結果は GitHub Pages にデプロイされます（Settings → Pages → Source: GitHub Actions）。サイトは小さなマルチページのダッシュボードです。**Compare** ページ（勝者ヒートマップ、ワークロードごとの p99 + スループット曲線とデータテーブル、ピーク RSS）に加え、各 Octane サーバー（Swoole / OpenSwoole / RoadRunner / FrankenPHP）ごとの **サーバー別ディープレポート** ページがあり、 **worker-count トグル** でビュー全体をスイープ済みのワーカー数の間で切り替えられます。
+実行して `docs/index.html`（チャート）/ `RESULTS.md`（テーブル）を開いてください。公開済みの実行結果は GitHub Pages にデプロイされます（Settings → Pages → Source: GitHub Actions）。サイトは小さなマルチページのダッシュボードです。**Compare** ページ（勝者ヒートマップ、ワークロードごとの p99 + スループット曲線とデータテーブル、ピーク RSS）に加え、各 Octane サーバー（Swoole / OpenSwoole / RoadRunner / FrankenPHP）ごとの **サーバー別ディープレポート** ページがあり、**worker-count トグル** でビュー全体をスイープ済みのワーカー数の間で切り替えられます。
 
 これらは **単一マシン** の結果です。**相対的なもの**（どのサーバーが勝つか、どの並行数で勝者が入れ替わるか）として読み、あなたのハードウェアにおける絶対値としては読まないでください。
 
@@ -20,46 +20,46 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 
 **主役: 並行数スイープにおける p99 / p50 レイテンシ。** テールレイテンシこそが、これらのサーバーが実際に分かれる場所です。平均スループットはノイズの範囲内に収まることがよくあります。スループット（req/s）も併せて報告します。**ピーク RSS**（メモリの最高水位）は副次的な「VPS サイジング」指標です。CPU% はあえて主役にしていません—cgroup の CPU サンプリングは引用するには騒がしすぎます。
 
-各セル = `{server, workload, workers, concurrency, run}` で、` results/` に 1 つの JSON ファイルとして保存され、埋め込まれたマニフェスト（固定バージョン、上限、コミット SHA、ホスト、wrk フラグ）を含むため、どのデータポイントも再現可能です。wrk エラー（非 2xx / タイムアウト）を記録したセルはフラグ付けされ、黙って平均に混ぜ込まれることはありません。
+各セル = `{server, workload, workers, concurrency, run}` で、`results/` に 1 つの JSON ファイルとして保存され、埋め込まれたマニフェスト（固定バージョン、上限、コミット SHA、ホスト、wrk フラグ）を含むため、どのデータポイントも再現可能です。wrk エラー（非 2xx / タイムアウト）を記録したセルはフラグ付けされ、黙って平均に混ぜ込まれることはありません。
 
 ## Fairness controls (held identical for every server)
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **スイープ**（` WORKER_COUNTS `、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは ` 4 8 `）。FPM の ` max_children ` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
-| CPU | **ホストの下半分**—4 コアランナーで ` cpus=2 `、` cpuset=0-1 `（8 コアホストでは ` cpus=4 `、` cpuset=0-3 `） | どのサーバーも同じコアを得る。SUT の cpu 数はマニフェストの上限に記録される |
-| Load generator | **ホストの上半分での ` wrk `**（ランナーでは ` cpuset=2-3 `、8 コアでは ` 4-7 `）—SUT とは交わらない | 生成ツールは **常に分離されている**。SUT の CPU を決して奪わない。セルごとに ` generator_isolated ` として記録される |
-| Memory | ` mem_limit=4g `（env ` MEM_LIMIT `） | 寛大で **均等な** 上限—16 GB ランナーでは決して縛られないため、どのサーバーも OOM ペナルティを受けず、ピーク RSS は真の最高水位を読み取る（クランプされない）。小規模 VPS シナリオには ` MEM_LIMIT=512m ` を設定 |
-| OPcache | 有効、` validate_timestamps=0 ` | Octane が保持するのと同様に、コードを一度だけコンパイル |
-| App env | ` APP_ENV=production `、` APP_DEBUG=false ` | 本番のコードパス |
-| Sessions | ` SESSION_DRIVER=array ` | ステートレスなエンドポイント—書き込みロックで直列化されるものがない |
+| Workers | **スイープ**（`WORKER_COUNTS`、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは `4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
+| CPU | **ホストの下半分**—4 コアランナーで `cpus=2`、`cpuset=0-1`（8 コアホストでは `cpus=4`、`cpuset=0-3`） | どのサーバーも同じコアを得る。SUT の cpu 数はマニフェストの上限に記録される |
+| Load generator | **ホストの上半分での `wrk`**（ランナーでは `cpuset=2-3`、8 コアでは `4-7`）—SUT とは交わらない | 生成ツールは **常に分離されている**。SUT の CPU を決して奪わない。セルごとに `generator_isolated` として記録される |
+| Memory | `mem_limit=4g`（env `MEM_LIMIT`） | 寛大で **均等な** 上限—16 GB ランナーでは決して縛られないため、どのサーバーも OOM ペナルティを受けず、ピーク RSS は真の最高水位を読み取る（クランプされない）。小規模 VPS シナリオには `MEM_LIMIT=512m` を設定 |
+| OPcache | 有効、`validate_timestamps=0` | Octane が保持するのと同様に、コードを一度だけコンパイル |
+| App env | `APP_ENV=production`、`APP_DEBUG=false` | 本番のコードパス |
+| Sessions | `SESSION_DRIVER=array` | ステートレスなエンドポイント—書き込みロックで直列化されるものがない |
 | Versions | 固定: PHP 8.4、Laravel 13、Octane 2.17（マニフェスト参照） | 可動部分なし |
 
 ハーネスは **一度に 1 つのアプリサーバーのみ** を実行する（他はすべて停止）ため、その CPU/RAM はアイドル状態の兄弟プロセスとの競合下ではなく、分離して計測されます。
 
-**デフォルト環境: GitHub Actions ` ubuntu-24.04 ` ランナー（4 vCPU / 16 GB RAM）。**` benchmark.sh ` は **ホストを半分に分割** します。SUT は下位コアを、` wrk ` 生成ツールは上位コアを得るので、生成ツールは **常に分離されています**（SUT の CPU を決して奪わない）。4 コアランナーでは、 **SUT は 2 cpus**（` cpuset 0-1 `）で、` cpus=2 `、` mem_limit=4g ` が設定されます。つまり Docker により 2 CPU / 4 GB に制限されたサーバーで、` wrk ` は ` 2-3 ` で動きます。8 コアホストでは SUT が 4 cpus（` 0-3 `）、` wrk ` が ` 4-7 ` を得ます。トレードオフは、SUT が **箱の半分しか** 得られないこと—なので、デフォルトランナーではレポートは **2-cpu / 4 GB サーバー** についてのもので、マニフェストの上限に記録されます（` cpus=2 `、` mem=4g `）。共有 CI ランナーは依然として騒がしい隣人なので、数値は **相対的なものとしてのみ** 読んでください。
+**デフォルト環境: GitHub Actions `ubuntu-24.04` ランナー（4 vCPU / 16 GB RAM）。**`benchmark.sh` は **ホストを半分に分割** します。SUT は下位コアを、`wrk` 生成ツールは上位コアを得るので、生成ツールは **常に分離されています**（SUT の CPU を決して奪わない）。4 コアランナーでは、**SUT は 2 cpus**（`cpuset 0-1`）で、`cpus=2`、`mem_limit=4g` が設定されます。つまり Docker により 2 CPU / 4 GB に制限されたサーバーで、`wrk` は `2-3` で動きます。8 コアホストでは SUT が 4 cpus（`0-3`）、`wrk` が `4-7` を得ます。トレードオフは、SUT が **箱の半分しか** 得られないこと—なので、デフォルトランナーではレポートは **2-cpu / 4 GB サーバー** についてのもので、マニフェストの上限に記録されます（`cpus=2`、`mem=4g`）。共有 CI ランナーは依然として騒がしい隣人なので、数値は **相対的なものとしてのみ** 読んでください。
 
 ## Workloads
 
-ワークロードは 3 つの **グループ** に整理されており、チャートとテーブルが「overhead → CPU がどこに使われるか → I/O」と読めるようになっています。` cpu ` グループの 3 つのルートはそれぞれ *異なる* 命令パスに負荷をかけるため、どのサーバーが勝つかについて意見が分かれる可能性があります。
+ワークロードは 3 つの **グループ** に整理されており、チャートとテーブルが「overhead → CPU がどこに使われるか → I/O」と読めるようになっています。`cpu` グループの 3 つのルートはそれぞれ *異なる* 命令パスに負荷をかけるため、どのサーバーが勝つかについて意見が分かれる可能性があります。
 
 | Group | Route | Isolates | Notes |
 |---|---|---|---|
-| overhead | `/bench/hello ` | ルーティング + レスポンスのオーバーヘッド | 固定長のボディ |
-| cpu | `/bench/hash ` | 整数 / ビット演算 | ` sha256 ` チェーン ×` BENCH_HASH_ITERATIONS `（hello を ≫ 上回るよう調整） |
-| cpu | `/bench/mandelbrot ` | 浮動小数点 / FPU | エスケープ時間方式のマンデルブロ集合、` BENCH_MANDELBROT_DIM `²×4 グリッド、`…_MAX_ITER ` 上限、×`…_REPEAT `（デフォルト ~30ms） |
-| cpu | `/bench/json ` | シリアライズ（codec） | 1000 要素の int 配列の ` json_encode `+` json_decode ` ラウンドトリップ ×` BENCH_JSON_ITERATIONS `（ルーティングではなく codec が支配的。デフォルト ~20ms） |
-| io | `/bench/db ` | 実際のクエリ | インデックス付き PK の ` SELECT ` 対 **MySQL 8** |
+| overhead | `/bench/hello` | ルーティング + レスポンスのオーバーヘッド | 固定長のボディ |
+| cpu | `/bench/hash` | 整数 / ビット演算 | `sha256` チェーン ×`BENCH_HASH_ITERATIONS`（hello を ≫ 上回るよう調整） |
+| cpu | `/bench/mandelbrot` | 浮動小数点 / FPU | エスケープ時間方式のマンデルブロ集合、`BENCH_MANDELBROT_DIM`²×4 グリッド、`…_MAX_ITER` 上限、×`…_REPEAT`（デフォルト ~30ms） |
+| cpu | `/bench/json` | シリアライズ（codec） | 1000 要素の int 配列の `json_encode`+`json_decode` ラウンドトリップ ×`BENCH_JSON_ITERATIONS`（ルーティングではなく codec が支配的。デフォルト ~20ms） |
+| io | `/bench/db` | 実際のクエリ | インデックス付き PK の `SELECT` 対 **MySQL 8** |
 
-**`/bench/db ` の注意点:** サーバーは接続処理が異なります（Swoole のコルーチンプール 対 RoadRunner 対 FrankenPHP）。このワークロードは **「各サーバーのデフォルトの Octane DB 挙動」** として位置づけられており、分離された生クエリの計測ではありません。チャートにもその旨が表示されます。
+**`/bench/db` の注意点:** サーバーは接続処理が異なります（Swoole のコルーチンプール 対 RoadRunner 対 FrankenPHP）。このワークロードは **「各サーバーのデフォルトの Octane DB 挙動」** として位置づけられており、分離された生クエリの計測ではありません。チャートにもその旨が表示されます。
 
 ## Run it
 
 このプロジェクトは、デフォルトでは GitHub Actions runner でベンチマークを実行し、レポートを生成するようになっています。このリポジトリの workflow をそのまま使うことも、fork して自分のリポジトリで実行することもできます。自分で管理するローカルマシンやリモートマシンで同じ harness を実行することもできます。
 
-**CI で（デフォルト）:** **Benchmark** ワークフロー（`.github/workflows/benchmark.yml `）を *Actions → Run workflow* からトリガーします。` ubuntu-24.04 ` 上で実行され、レポートをビルドし、` results/` + ` docs/` をアーティファクトとしてアップロードします（` publish ` 入力を設定すると ` docs/` を GitHub Pages にデプロイ）。入力でマトリクスをスケールできます。
+**CI で（デフォルト）:** **Benchmark** ワークフロー（`.github/workflows/benchmark.yml`）を *Actions → Run workflow* からトリガーします。`ubuntu-24.04` 上で実行され、レポートをビルドし、`results/` + `docs/` をアーティファクトとしてアップロードします（`publish` 入力を設定すると `docs/` を GitHub Pages にデプロイ）。入力でマトリクスをスケールできます。
 
-**ローカルで** — **前提条件:** Docker（Compose v2）、および ` make deps ` 用にホスト上の PHP 8.4 + Composer（ホスト上で動くのは ` composer install ` だけで、それ以外はすべて Docker 内）。` Makefile ` がワークフローをラップしています—` make help ` ですべてのターゲットが一覧表示されます。
+**ローカルで** — **前提条件:** Docker（Compose v2）、および `make deps` 用にホスト上の PHP 8.4 + Composer（ホスト上で動くのは `composer install` だけで、それ以外はすべて Docker 内）。`Makefile` がワークフローをラップしています—`make help` ですべてのターゲットが一覧表示されます。
 
 ```bash
 make setup     # one-time: .env + APP_KEY + composer install into vendor/
@@ -69,9 +69,9 @@ make report    # build RESULTS.md + docs/ (Compare + per-server pages)  (= pytho
 make smoke     # quick end-to-end smoke run (a few minutes)
 ```
 
-env で調整可能: ` SERVERS `、` WORKLOADS `、` CONCURRENCIES `、` WORKER_COUNTS `、` RUNS `、` DURATION `、` WARMUP `、` TIMEOUT `、` BENCH_HASH_ITERATIONS `、` BENCH_MANDELBROT_DIM `、` BENCH_MANDELBROT_MAX_ITER `、` BENCH_MANDELBROT_REPEAT `、` BENCH_JSON_ITERATIONS `。各（server, workload）は実行前に **各並行数で**ウォームアップされ、` wrk --timeout `（デフォルト 15s）により、飽和した遅いセルもエラーとして打ち切らず計測できます。
+env で調整可能: `SERVERS`、`WORKLOADS`、`CONCURRENCIES`、`WORKER_COUNTS`、`RUNS`、`DURATION`、`WARMUP`、`TIMEOUT`、`BENCH_HASH_ITERATIONS`、`BENCH_MANDELBROT_DIM`、`BENCH_MANDELBROT_MAX_ITER`、`BENCH_MANDELBROT_REPEAT`、`BENCH_JSON_ITERATIONS`。各（server, workload）は実行前に **各並行数で**ウォームアップされ、`wrk --timeout`（デフォルト 15s）により、飽和した遅いセルもエラーとして打ち切らず計測できます。
 
-` benchmark.sh ` はデフォルトでおよそ ` 2 * SUT_CPUS ` のワーカー数と、その 2 倍をテストします。デフォルトの 4-vCPU ランナーでは SUT が 2 CPUs を得るため、デフォルトの worker sweep は ` 4 8 ` です。 8 workers のスループットが 4 より低い、または p99 が悪い場合も有効な結果です。通常は、追加の PHP workers が scheduler contention、cache pressure、DB/socket contention を増やし、有効な CPU 容量を増やしていないことを示します。
+`benchmark.sh` はデフォルトでおよそ `2 * SUT_CPUS` のワーカー数と、その 2 倍をテストします。デフォルトの 4-vCPU ランナーでは SUT が 2 CPUs を得るため、デフォルトの worker sweep は `4 8` です。8 workers のスループットが 4 より低い、または p99 が悪い場合も有効な結果です。通常は、追加の PHP workers が scheduler contention、cache pressure、DB/socket contention を増やし、有効な CPU 容量を増やしていないことを示します。
 
 ## How it works
 
@@ -87,7 +87,7 @@ bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + doc
   per-server pages, Chart.js, logo embedded)
 ```
 
-` wrk ` コンテナは小さな Lua レポーター（` docker/wrk/report.lua `）を実行し、完全なレイテンシパーセンタイルとクラス別エラー数を含む 1 行の JSON を出力します。
+`wrk` コンテナは小さな Lua レポーター（`docker/wrk/report.lua`）を実行し、完全なレイテンシパーセンタイルとクラス別エラー数を含む 1 行の JSON を出力します。
 
 ## Idle memory profiler
 
@@ -100,17 +100,15 @@ bench/aggregate.py ── results/*.json → medians+ranges → RESULTS.md + doc
 python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
 ```
 
-このフィットは、**固定** のフレームワーク/マスター/OPcache のオーバーヘッドを、ワーカーを 1 つ増やす **限界** コストから切り分けます。素朴な ` RSS / N ` の平均は誤解を招きます—N が増えると下がるのは、固定コストが償却されるためであって、ワーカーが安くなったからではありません。
+このフィットは、**固定** のフレームワーク/マスター/OPcache のオーバーヘッドを、ワーカーを 1 つ増やす **限界** コストから切り分けます。素朴な `RSS / N` の平均は誤解を招きます—N が増えると下がるのは、固定コストが償却されるためであって、ワーカーが安くなったからではありません。
 
 ## Caveats
 
 - **単一マシン、絶対ではなく相対。** あなたの数値は異なります。移植可能な発見は *形* （どこで誰が勝つか）です。
-- **Pinning セルフチェック。** ホストが `--cpuset-cpus ` を尊重しない場合、すべてのセルは
-` pinning=unverified ` とタグ付けされ、結果は生成ツール分離として提示されません。
-- **4 コアランナー上の 2-cpu / 4 GB SUT。** 生成ツールを分離するため、ホストは半分に分割されます— なのでデフォルトランナーでは各 app Docker container は **2 CPU / 4 GB** サーバーです（残りの 2 コアが ` wrk ` を駆動）。マニフェストにラベル付けされます（` cpus=2 `、` mem=4g `）。生成ツールを分離した *まま* の 4-cpu SUT には 8 コアホストが必要です（その分割では SUT に 4 コア、` wrk ` に残りの 4 コアが与えられる）。
+- **Pinning セルフチェック。** ホストが `--cpuset-cpus` を尊重しない場合、すべてのセルは `pinning=unverified` とタグ付けされ、結果は生成ツール分離として提示されません。
+- **4 コアランナー上の 2-cpu / 4 GB SUT。** 生成ツールを分離するため、ホストは半分に分割されます— なのでデフォルトランナーでは各 app Docker container は **2 CPU / 4 GB** サーバーです（残りの 2 コアが `wrk` を駆動）。マニフェストにラベル付けされます（`cpus=2`、`mem=4g`）。生成ツールを分離した *まま* の 4-cpu SUT には 8 コアホストが必要です（その分割では SUT に 4 コア、`wrk` に残りの 4 コアが与えられる）。
 - **ワーカー数が多いほど速いとは限らない。** 4 workers から 8 workers で低下する場合は、このマシン上の 局所的な飽和点を benchmark が見つけたと解釈してください。特に CPU-bound workload やデフォルトの 2-CPU SUT 分割ではそうです。
-- **` cpu ` グループのキャリブレーション。** デフォルトは **~20-30ms/リクエスト** を狙います。
-`/bench/hello ` を支配するのに十分重く、4 コアの箱で並行数 128 までのスイープが ` wrk ` のタイムアウトに飽和しない程度に軽い。` BENCH_HASH_ITERATIONS `（2000）、` BENCH_MANDELBROT_DIM `（32）/ ` BENCH_MANDELBROT_MAX_ITER `（256）、` BENCH_JSON_ITERATIONS `（150）で自分のマシンに合わせて調整してください。`…_REPEAT ` はより重いホスト向けにマンデルブロをスケールアップします。
+- **`cpu` グループのキャリブレーション。** デフォルトは **~20-30ms/リクエスト** を狙います。`/bench/hello` を支配するのに十分重く、4 コアの箱で並行数 128 までのスイープが `wrk` のタイムアウトに飽和しない程度に軽い。`BENCH_HASH_ITERATIONS`（2000）、`BENCH_MANDELBROT_DIM`（32）/ `BENCH_MANDELBROT_MAX_ITER`（256）、`BENCH_JSON_ITERATIONS`（150）で自分のマシンに合わせて調整してください。`…_REPEAT` はより重いホスト向けにマンデルブロをスケールアップします。
 
 ## Layout
 
@@ -131,8 +129,8 @@ readmes/                    # README translations (10 languages)
 
 ## License
 
-この Laravel Octane benchmark は MIT License で公開され、[Terry L.](https://terryl.in) によってメンテナンスされています。Terry L. は Airygen の開発者でもあります。Airygen は、構造化されたコンテンツワークフローと検索を意識した公開ツールを必要とするチーム向けの、無料で強力な [WordPress SEO Plugin](https://www.airygen.com/ja) です。
+この Laravel Octane benchmark は MIT License で公開され、[Terry L.](https://terryl.in) によってメンテナンスされています。Terry L. は Airygen の開発者でもあります。Airygen は、構造化されたコンテンツワークフローと検索を意識した公開ツールを必要とするチーム向けの、無料で強力な [WordPress SEO Plugin](https://www.airygen.com/en) です。
 
 ## 検討中
 
-Google Cloud Run などの serverless container サービスは、この benchmark で使っている固定 2-CPU container とは挙動が異なる場合があります。これらのサービスは通常、割り当てられた compute に対して課金され、基盤 host には多くの CPU cores があることがあります。worker 数を増やすと、理論上は設定されたサービス上限に達するまで利用可能な compute を消費できる可能性があります。この環境では、` workers = CPU x 2 ` という経験則が最適なデフォルトとは限りません。worker count は、実際の CPU 割り当て、concurrency model、課金方式、latency target に合わせて調整すべきです。
+Google Cloud Run などの serverless container サービスは、この benchmark で使っている固定 2-CPU container とは挙動が異なる場合があります。これらのサービスは通常、割り当てられた compute に対して課金され、基盤 host には多くの CPU cores があることがあります。worker 数を増やすと、理論上は設定されたサービス上限に達するまで利用可能な compute を消費できる可能性があります。この環境では、`workers = CPU x 2` という経験則が最適なデフォルトとは限りません。worker count は、実際の CPU 割り当て、concurrency model、課金方式、latency target に合わせて調整すべきです。

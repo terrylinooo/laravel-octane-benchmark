@@ -12,8 +12,10 @@ Cells that recorded any wrk errors are flagged, not hidden.
 """
 import base64
 import glob
+import html
 import json
 import os
+import shutil
 import statistics
 from collections import defaultdict
 
@@ -80,6 +82,13 @@ GROUP_LABEL = {"overhead": "Overhead", "cpu": "CPU-bound", "io": "I/O"}
 # (linked from the header menu). OpenSwoole shares Swoole's driver and FPM is the
 # control, so they appear in the comparison but not as standalone reports.
 FEATURED_SERVERS = ["swoole", "openswoole", "roadrunner", "frankenphp"]
+SERVER_LABELS = {
+    "swoole": "Swoole",
+    "openswoole": "OpenSwoole",
+    "roadrunner": "RoadRunner",
+    "frankenphp": "FrankenPHP",
+    "fpm": "PHP-FPM",
+}
 
 
 def logo_data_uri():
@@ -91,6 +100,17 @@ def logo_data_uri():
             return "data:image/png;base64," + base64.b64encode(fh.read()).decode("ascii")
     except OSError:
         return ""
+
+
+def copy_social_image():
+    """Publish the benchmark image so Open Graph/Twitter metadata can use an
+    absolute URL instead of an inline data URI."""
+    src = os.path.join(ROOT, "readmes", "laravel-bm.png")
+    dst = os.path.join(DOCS, "laravel-bm.png")
+    try:
+        shutil.copyfile(src, dst)
+    except OSError:
+        pass
 
 
 def grouped(workloads):
@@ -208,6 +228,7 @@ def main():
     here = os.path.dirname(__file__)
     data_js = json.dumps(summary)
     logo = logo_data_uri()
+    copy_social_image()
 
     # Serve docs/ as pre-built static files: .nojekyll stops GitHub Pages from
     # running Jekyll over it (the pages are generated, not a Jekyll site).
@@ -225,9 +246,12 @@ def main():
     with open(os.path.join(here, "server_template.html")) as fh:
         server_tpl = fh.read()
     for s in featured:
+        server_label = SERVER_LABELS.get(s, s)
         page = (server_tpl.replace("/*__DATA__*/", data_js)
                           .replace("/*__LOGO__*/", logo)
-                          .replace("/*__SERVER__*/", json.dumps(s)))
+                          .replace("/*__SERVER__*/", json.dumps(s))
+                          .replace("/*__SERVER_LABEL__*/", html.escape(server_label))
+                          .replace("/*__SERVER_PATH__*/", "/" + html.escape(s)))
         with open(os.path.join(DOCS, f"{s}.html"), "w") as fh:
             fh.write(page)
 

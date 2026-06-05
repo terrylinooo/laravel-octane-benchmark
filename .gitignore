@@ -34,6 +34,7 @@ Thumbs.db
 /results/mem/
 /docs/summary.json
 /docs/*.html
+/docs/laravel-bm.png
 /docs/.nojekyll
 /RESULTS.md
 /MEM_RESULTS.md
