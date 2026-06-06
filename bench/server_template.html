@@ -439,8 +439,7 @@
     .hero-name { font-size: 22px; }
     .cmp-legend { margin-left: 0; }
     .chart-pair { gap: 16px; }
-    .view-options { flex-wrap: wrap; gap: 10px; width: 100%; margin-left: 0; }
-    .view-options .worker-toggle { flex-basis: 100%; margin-left: 0; }
+    .view-options { flex-wrap: nowrap; justify-content: center; gap: 10px; width: 100%; margin-left: 0; }
   }
 </style>
 </head>
@@ -539,7 +538,7 @@
     </div>
     <div class="card">
       <div class="card-title">Peak RSS per server</div>
-      <div class="card-sub">Lower is better. Persistent workers (Octane) carry the framework in memory; FPM forks per request.</div>
+      <div class="card-sub">Lower is better. Persistent workers (Octane) carry the framework in memory; FPM forks per request. The <code>--max-requests</code> option is not applied.</div>
       <div class="mem-wrap"><canvas id="memChart"></canvas></div>
       <div class="footer-note" id="memNote"></div>
     </div>
