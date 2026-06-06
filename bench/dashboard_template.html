@@ -17,6 +17,7 @@
 <meta name="twitter:title" content="Laravel Octane Benchmark" />
 <meta name="twitter:description" content="Interactive benchmark report for Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM." />
 <meta name="twitter:image" content="https://terrylinooo.github.io/laravel-octane-benchmark/laravel-bm.png" />
+<link rel="icon" href="favicon.ico" type="image/x-icon" sizes="48x48 32x32" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script type="application/ld+json">
@@ -284,21 +285,37 @@
 
   /* Workload cards */
   .group-cards { display: flex; flex-direction: column; gap: 18px; }
-  .wl-card { }
   .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
   .wl-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
   .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
   .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
-  .lat-select {
+  .wl-metric {
+    margin-left: auto; flex-shrink: 0; white-space: nowrap;
+    font-size: 11.5px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text-3);
+  }
+
+  /* ===== Global view-options (report-type + worker-toggle) ===== */
+  .view-options {
+    display: inline-flex; align-items: center; gap: 14px; margin-left: auto;
+    flex-shrink: 0;
+  }
+  .vo-group { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; }
+  .vo-label {
+    font-size: 10.5px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-3);
+  }
+  .report-type {
     appearance: none; background: var(--card); color: var(--text);
     border: 1px solid var(--border-strong); border-radius: 8px;
     padding: 6px 28px 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
     background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
     background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
     background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
-    margin-left: auto;
   }
-  .lat-select:hover { border-color: var(--accent); }
+  .report-type:hover { border-color: var(--accent); }
+  .worker-toggle { margin-left: 0; }
   .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .chart-box { min-width: 0; }
   .chart-box .ct {
@@ -408,6 +425,8 @@
     .kpis { flex-direction: column; flex-wrap: nowrap; gap: 12px; }
     .kpi { min-width: 0; width: 100%; }
     .chart-pair { gap: 16px; }
+    .view-options { flex-wrap: wrap; gap: 10px; width: 100%; margin-left: 0; }
+    .view-options .worker-toggle { flex-basis: 100%; margin-left: 0; }
   }
 </style>
 </head>
@@ -442,7 +461,18 @@
 <div class="metastrip">
   <div class="metastrip-row">
     <div class="pills" id="manifestPills"></div>
-    <div class="worker-toggle" id="workerToggle"></div>
+    <div class="view-options">
+      <div class="vo-group">
+        <span class="vo-label">Metric</span>
+        <select class="report-type" id="reportType" aria-label="Latency percentile">
+          <option value="p50_median">p50</option>
+          <option value="p90_median">p90</option>
+          <option value="p95_median">p95</option>
+          <option value="p99_median" selected>p99</option>
+        </select>
+      </div>
+      <div class="worker-toggle" id="workerToggle"></div>
+    </div>
   </div>
 </div>
 
@@ -467,14 +497,8 @@
         <div class="card">
           <div class="wl-head">
             <div class="wl-title">
-              <div class="card-title">Winner heatmap &mdash; lowest latency</div>
+              <div class="card-title" id="heatmapTitle">Winner heatmap &mdash; lowest latency</div>
             </div>
-            <select class="lat-select" id="heatmapMetric" aria-label="Winner heatmap latency percentile">
-              <option value="p50_median">p50</option>
-              <option value="p90_median">p90</option>
-              <option value="p95_median">p95</option>
-              <option value="p99_median" selected>p99</option>
-            </select>
           </div>
           <div class="card-sub">Each cell shows the server with the lowest median latency at that concurrency.</div>
           <div class="table-scroll"><table class="heatmap" id="heatmap"></table></div>
@@ -529,6 +553,7 @@ const LATENCY_METRICS = [
   { key: 'p99_median', label: 'p99' },
 ];
 const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
+let SELECTED_METRIC = DEFAULT_LATENCY_METRIC;
 const SRV_LABEL = {
   swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
   frankenphp: "FrankenPHP", fpm: "PHP-FPM"
@@ -618,8 +643,10 @@ function renderPills() {
 }
 
 /* ===== HEATMAP ===== */
-function renderHeatmap(metric = DEFAULT_LATENCY_METRIC) {
+function renderHeatmap(metric = SELECTED_METRIC) {
   const t = document.getElementById('heatmap');
+  const title = document.getElementById('heatmapTitle');
+  if (title) title.innerHTML = `Winner heatmap &mdash; lowest ${metric.label} latency`;
   let head = '<thead><tr><th class="rowhdr">Workload</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -645,13 +672,13 @@ function renderHeatmap(metric = DEFAULT_LATENCY_METRIC) {
   t.innerHTML = head + body;
 }
 
-function initHeatmapMetric() {
-  const select = document.getElementById('heatmapMetric');
+function initReportType() {
+  const select = document.getElementById('reportType');
   if (!select) return;
-  select.value = DEFAULT_LATENCY_METRIC.key;
-  select.addEventListener('change', () => {
-    const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
-    renderHeatmap(metric);
+  select.value = SELECTED_METRIC.key;
+  select.addEventListener('change', function () {
+    SELECTED_METRIC = LATENCY_METRICS.find(m => m.key === this.value) || DEFAULT_LATENCY_METRIC;
+    rebuildAll();
   });
 }
 
@@ -659,9 +686,10 @@ function initHeatmapMetric() {
 function renderKpis() {
   let lp = { v: Infinity, s: null, w: null, c: null };
   let bt = { v: -Infinity, s: null, w: null, c: null };
+  const latKey = SELECTED_METRIC.key;
   DATA.cells.forEach(cc => {
     if (!matchWorkers(cc)) return;
-    if (cc.p99_median != null && cc.p99_median < lp.v) lp = { v: cc.p99_median, s: cc.server, w: cc.workload, c: cc.concurrency };
+    if (cc[latKey] != null && cc[latKey] < lp.v) lp = { v: cc[latKey], s: cc.server, w: cc.workload, c: cc.concurrency };
     if (cc.rps_median != null && cc.rps_median > bt.v) bt = { v: cc.rps_median, s: cc.server, w: cc.workload, c: cc.concurrency };
   });
   const peakBy = peakRssBy();
@@ -670,7 +698,7 @@ function renderKpis() {
 
   const srv = (s) => s ? `<span class="srv"><span class="swatch" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span>` : '';
   const cards = [
-    { label: 'Lowest p99 overall', val: lp.s ? lp.v : '—', unit: lp.s ? 'ms' : '', s: lp.s, ctx: lp.s ? `${lp.w} · c${lp.c}` : '' },
+    { label: `Lowest ${SELECTED_METRIC.label} overall`, val: lp.s ? lp.v : '—', unit: lp.s ? 'ms' : '', s: lp.s, ctx: lp.s ? `${lp.w} · c${lp.c}` : '' },
     { label: 'Best throughput', val: bt.s ? Math.round(bt.v).toLocaleString() : '—', unit: bt.s ? 'req/s' : '', s: bt.s, ctx: bt.s ? `${bt.w} · c${bt.c}` : '' },
     { label: 'Lowest peak memory', val: lm.s ? lm.v : '—', unit: lm.s ? 'MiB' : '', s: lm.s, ctx: lm.s ? 'max RSS across runs' : '' }
   ];
@@ -788,43 +816,16 @@ function makeWorkloadCharts(w, container) {
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
-    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, DEFAULT_LATENCY_METRIC.key, true)}</span></div>
+    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, SELECTED_METRIC.key, true)}</span></div>
     <div class="wl-table-wrap">${workloadTableHtml(w)}</div>`;
-  const latChart = build(DEFAULT_LATENCY_METRIC.key, true, 'ms', idLat);
+  build(SELECTED_METRIC.key, true, 'ms', idLat);
   build('rps_median', false, 'req/s', idRps);
-
-  const select = container.querySelector('.lat-select');
-  const title = container.querySelector('.lat-chart-title');
-  const crossLabel = container.querySelector('.wl-cross .lab');
-  const crossText = container.querySelector('.wl-cross span:last-child');
-  const tableWrap = container.querySelector('.wl-table-wrap');
-  if (select) {
-    select.value = DEFAULT_LATENCY_METRIC.key;
-    select.addEventListener('change', () => {
-      const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
-      const leaders = leaderSeq(metric.key, true);
-      const crossX = new Set();
-      for (let i = 1; i < leaders.length; i++) if (leaders[i] && leaders[i] !== leaders[i - 1]) crossX.add(i);
-      latChart.data.datasets.forEach(ds => {
-        const data = DATA.concurrencies.map(c => { const cc = cell(ds._server, w, c); return cc ? cc[metric.key] : null; });
-        ds.data = data;
-        ds.pointBackgroundColor = data.map((_, i) => crossX.has(i) ? '#fff' : COLORS[ds._server]);
-        ds.pointBorderWidth = data.map((_, i) => crossX.has(i) ? 3 : 1);
-        ds.pointRadius = data.map((_, i) => crossX.has(i) ? 5.5 : 3);
-      });
-      title.textContent = 'Latency';
-      crossLabel.textContent = 'lead';
-      crossText.innerHTML = crossoverCaption(w, metric.key, true);
-      tableWrap.innerHTML = workloadTableHtml(w, null, metric);
-      latChart.update();
-    });
-  }
 }
 
 /* ===== PER-WORKLOAD DATA TABLE ===== */
 const fmtMs = (v) => v == null ? null : `${v} ms`;
 const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
-function workloadTableHtml(w, highlightServer, metric = DEFAULT_LATENCY_METRIC) {
+function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -871,9 +872,7 @@ function renderGroups() {
             <span class="name">${w}</span>
             <span class="desc">${WL_DESC[w] || ''}</span>
           </div>
-          <select class="lat-select" aria-label="Latency percentile for ${w}">
-            ${LATENCY_METRICS.map(m => `<option value="${m.key}"${m.key === DEFAULT_LATENCY_METRIC.key ? ' selected' : ''}>${m.label}</option>`).join('')}
-          </select>
+          <span class="wl-metric">${SELECTED_METRIC.label} latency</span>
         </div>
         <div class="chart-pair"></div>`;
       wrap.appendChild(card);
@@ -968,8 +967,7 @@ function rebuildAll() {
   charts.forEach(c => c.destroy());
   charts.length = 0;
   document.getElementById('groupSections').innerHTML = '';
-  const heatmapMetric = LATENCY_METRICS.find(m => m.key === document.getElementById('heatmapMetric')?.value) || DEFAULT_LATENCY_METRIC;
-  renderHeatmap(heatmapMetric);
+  renderHeatmap();
   renderKpis();
   renderGroups();
   applyVisibility();
@@ -997,8 +995,8 @@ function initScrollSpy() {
 renderNavSelect();
 renderPills();
 renderWorkerToggle();
+initReportType();
 renderHeatmap();
-initHeatmapMetric();
 renderKpis();
 renderLegend();
 renderGroups();

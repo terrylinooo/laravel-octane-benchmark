@@ -17,6 +17,7 @@
 <meta name="twitter:title" content="/*__SERVER_LABEL__*/ Laravel Octane Benchmark Report" />
 <meta name="twitter:description" content="Deep-dive benchmark report for /*__SERVER_LABEL__*/ with latency, throughput, and memory comparisons." />
 <meta name="twitter:image" content="https://terrylinooo.github.io/laravel-octane-benchmark/laravel-bm.png" />
+<link rel="icon" href="favicon.ico" type="image/x-icon" sizes="48x48 32x32" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script type="application/ld+json">
@@ -287,21 +288,37 @@
 
   /* ===== Workload cards ===== */
   .group-cards { display: flex; flex-direction: column; gap: 18px; }
-  .wl-card { }
   .wl-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
   .wl-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
   .wl-head .name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
   .wl-head .desc { font-size: 12.5px; color: var(--text-3); }
-  .lat-select {
+  .wl-metric {
+    margin-left: auto; flex-shrink: 0; white-space: nowrap;
+    font-size: 11.5px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text-3);
+  }
+
+  /* ===== Global view-options (report-type + worker-toggle) ===== */
+  .view-options {
+    display: inline-flex; align-items: center; gap: 14px; margin-left: auto;
+    flex-shrink: 0;
+  }
+  .vo-group { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; }
+  .vo-label {
+    font-size: 10.5px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-3);
+  }
+  .report-type {
     appearance: none; background: var(--card); color: var(--text);
     border: 1px solid var(--border-strong); border-radius: 8px;
     padding: 6px 28px 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
     background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
     background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
     background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
-    margin-left: auto;
   }
-  .lat-select:hover { border-color: var(--srv-color, var(--accent)); }
+  .report-type:hover { border-color: var(--srv-color, var(--accent)); }
+  .worker-toggle { margin-left: 0; }
   .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .chart-box { min-width: 0; }
   .chart-box .ct {
@@ -416,6 +433,8 @@
     .hero-name { font-size: 22px; }
     .cmp-legend { margin-left: 0; }
     .chart-pair { gap: 16px; }
+    .view-options { flex-wrap: wrap; gap: 10px; width: 100%; margin-left: 0; }
+    .view-options .worker-toggle { flex-basis: 100%; margin-left: 0; }
   }
 </style>
 </head>
@@ -450,7 +469,18 @@
 <div class="metastrip">
   <div class="metastrip-row">
     <div class="pills" id="manifestPills"></div>
-    <div class="worker-toggle" id="workerToggle"></div>
+    <div class="view-options">
+      <div class="vo-group">
+        <span class="vo-label">Metric</span>
+        <select class="report-type" id="reportType" aria-label="Latency percentile">
+          <option value="p50_median">p50</option>
+          <option value="p90_median">p90</option>
+          <option value="p95_median">p95</option>
+          <option value="p99_median" selected>p99</option>
+        </select>
+      </div>
+      <div class="worker-toggle" id="workerToggle"></div>
+    </div>
   </div>
 </div>
 
@@ -552,6 +582,7 @@ const LATENCY_METRICS = [
   { key: 'p99_median', label: 'p99' },
 ];
 const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
+let SELECTED_METRIC = DEFAULT_LATENCY_METRIC;
 
 /* cell() may be undefined for sparse data -> return null, skip safely */
 const cell = (s, w, c) => {
@@ -838,37 +869,16 @@ function makeWorkloadCharts(w, container) {
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
-    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, DEFAULT_LATENCY_METRIC.key, true)}</span></div>
+    <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, SELECTED_METRIC.key, true)}</span></div>
     <div class="wl-table-wrap">${workloadTableHtml(w, SERVER)}</div>`;
-  const latChart = buildWorkloadChart(idLat, w, DEFAULT_LATENCY_METRIC.key, true, 'ms');
+  buildWorkloadChart(idLat, w, SELECTED_METRIC.key, true, 'ms');
   buildWorkloadChart(idRps, w, 'rps_median', false, 'req/s');
-
-  const select = container.querySelector('.lat-select');
-  const title = container.querySelector('.lat-chart-title');
-  const crossLabel = container.querySelector('.wl-cross .lab');
-  const crossText = container.querySelector('.wl-cross span:last-child');
-  const tableWrap = container.querySelector('.wl-table-wrap');
-  if (select) {
-    select.value = DEFAULT_LATENCY_METRIC.key;
-    select.addEventListener('change', () => {
-      const metric = LATENCY_METRICS.find(m => m.key === select.value) || DEFAULT_LATENCY_METRIC;
-      latChart.data.datasets.forEach(ds => {
-        ds.data = DATA.concurrencies.map(c => { const cc = cell(ds._server, w, c); return cc ? cc[metric.key] : null; });
-      });
-      latChart.options = baseLineOptions('ms', metric.key);
-      title.textContent = 'Latency';
-      crossLabel.textContent = 'lead';
-      crossText.innerHTML = crossoverCaption(w, metric.key, true);
-      tableWrap.innerHTML = workloadTableHtml(w, SERVER, metric);
-      latChart.update();
-    });
-  }
 }
 
 /* ===== PER-WORKLOAD DATA TABLE ===== */
 const fmtMs = (v) => v == null ? null : `${v} ms`;
 const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
-function workloadTableHtml(w, highlightServer, metric = DEFAULT_LATENCY_METRIC) {
+function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -923,9 +933,7 @@ function renderGroups() {
             <span class="name">${w}</span>
             <span class="desc">${WL_DESC[w] || ''}</span>
           </div>
-          <select class="lat-select" aria-label="Latency percentile for ${w}">
-            ${LATENCY_METRICS.map(m => `<option value="${m.key}"${m.key === DEFAULT_LATENCY_METRIC.key ? ' selected' : ''}>${m.label}</option>`).join('')}
-          </select>
+          <span class="wl-metric">${SELECTED_METRIC.label} latency</span>
         </div>
         <div class="chart-pair"></div>`;
       wrap.appendChild(card);
@@ -1078,6 +1086,17 @@ function renderWorkerToggle() {
   });
 }
 
+/* ===== GLOBAL REPORT-TYPE (latency percentile) ===== */
+function initReportType() {
+  const select = document.getElementById('reportType');
+  if (!select) return;
+  select.value = SELECTED_METRIC.key;
+  select.addEventListener('change', function () {
+    SELECTED_METRIC = LATENCY_METRICS.find(m => m.key === this.value) || DEFAULT_LATENCY_METRIC;
+    rebuildAll();
+  });
+}
+
 /* ===== REBUILD EVERYTHING (worker-count switch) ===== */
 function rebuildAll() {
   charts.forEach(c => c.destroy());
@@ -1095,6 +1114,7 @@ function rebuildAll() {
 renderNav();
 renderPills();
 renderWorkerToggle();
+initReportType();
 renderHero();
 renderCmpSelect();
 renderGroups();

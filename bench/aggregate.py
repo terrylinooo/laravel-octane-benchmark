@@ -110,14 +110,13 @@ def logo_data_uri():
 
 
 def copy_social_image():
-    """Publish the benchmark image so Open Graph/Twitter metadata can use an
-    absolute URL instead of an inline data URI."""
-    src = os.path.join(ROOT, "readmes", "laravel-bm.png")
-    dst = os.path.join(DOCS, "laravel-bm.png")
-    try:
-        shutil.copyfile(src, dst)
-    except OSError:
-        pass
+    """Publish the OG/Twitter image and the favicon into docs/ so the pages can
+    reference them by URL instead of inlining them."""
+    for name in ("laravel-bm.png", "favicon.ico"):
+        try:
+            shutil.copyfile(os.path.join(ROOT, "readmes", name), os.path.join(DOCS, name))
+        except OSError:
+            pass
 
 
 def grouped(workloads):

@@ -49,3 +49,5 @@ __pycache__/
 
 # benchmark.sh / mem-profile.sh pristine backup of the FPM pool (restored on exit)
 docker/fpm/pool.conf.orig
+/docs/favicon.ico
+/docs/laravel-bm.png
