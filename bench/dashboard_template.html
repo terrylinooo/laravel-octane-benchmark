@@ -223,6 +223,22 @@
 
   main { flex: 1; min-width: 0; padding: 28px 32px 80px; max-width: 1280px; }
   section { scroll-margin-top: 74px; margin-bottom: 44px; }
+  .report-card { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+  .report-line { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text); }
+  .report-ico { font-size: 19px; color: var(--accent); }
+  .report-dl-wrap { display: flex; flex-direction: row; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .report-dl { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; flex-shrink: 0;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 13.5px;
+    padding: 9px 18px; border-radius: 8px; transition: filter .15s ease; }
+  .report-dl:hover { filter: brightness(1.08); }
+  .report-dl .material-symbols-outlined { font-size: 18px; }
+  .report-desc { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+  .report-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+    font-size: 13px; color: var(--text); }
+  .report-caption .report-ext { font-size: 14px; opacity: .7; }
+  .report-hint { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
+  .report-hint code { background: var(--pill-bg); padding: 1px 6px; border-radius: 4px;
+    font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .sec-head { margin-bottom: 18px; }
   .sec-head h2 {
     font-size: 19px; font-weight: 680; margin: 0 0 3px;
@@ -486,6 +502,7 @@
   <nav class="sidebar" id="sidebar">
     <div class="nav-label">Navigate</div>
     <a href="#summary" class="active"><span class="material-symbols-outlined">leaderboard</span> Summary</a>
+    <a href="#report"><span class="material-symbols-outlined">schedule</span> Report</a>
     <a href="#overhead"><span class="material-symbols-outlined">bolt</span> Overhead</a>
     <a href="#cpu"><span class="material-symbols-outlined">memory</span> CPU</a>
     <a href="#io"><span class="material-symbols-outlined">database</span> I/O</a>
@@ -513,6 +530,37 @@
       </div>
       <div style="margin-top:20px;">
         <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    <section id="report">
+      <div class="sec-head">
+        <h2>Report</h2>
+      </div>
+      <div class="card report-card">
+        <div class="report-line">
+          <span class="material-symbols-outlined report-ico">schedule</span>
+          <span>This report was generated on <strong id="reportGenerated">&mdash;</strong>.</span>
+        </div>
+        <div id="reportDownloadWrap" class="report-dl-wrap" hidden>
+          <a id="reportDownload" class="report-dl" href="#" target="_blank" rel="noopener">
+            <span class="material-symbols-outlined">download</span>
+            <span>Download</span>
+          </a>
+          <div class="report-desc">
+            <div class="report-caption">
+              Download the full report from the CI run &mdash; every raw per-cell result JSON, RESULTS.md &amp; the dashboard
+              <span class="material-symbols-outlined report-ext">open_in_new</span>
+            </div>
+            <div class="report-hint">
+              On the run page, scroll down to the <strong>Artifacts</strong> section and use the download button to the right of <code id="reportArtifact">benchmark-&hellip;</code>.
+            </div>
+          </div>
+        </div>
+        <div id="reportLocal" class="card-sub" hidden>
+          Generated locally &mdash; the downloadable artifact bundle is produced by the
+          <a href="https://github.com/terrylinooo/laravel-octane-benchmark/actions" target="_blank" rel="noopener">CI workflow</a>.
+        </div>
       </div>
     </section>
 
@@ -646,6 +694,31 @@ function renderPills() {
   }
   html += `<span class="pill info" title="All numbers are relative comparisons on identical hardware — not absolute production figures">&#9432; relative-only</span>`;
   el.innerHTML = html;
+}
+
+/* ===== REPORT (generated-at + CI download) ===== */
+function fmtReportDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+  });
+}
+function renderReport() {
+  const m = DATA.manifest || {}, r = DATA.report || {};
+  const gen = document.getElementById('reportGenerated');
+  if (gen) gen.textContent = fmtReportDate(m.generated_at) || m.generated_at || '—';
+  const wrap = document.getElementById('reportDownloadWrap');
+  const dl = document.getElementById('reportDownload');
+  const local = document.getElementById('reportLocal');
+  if (r.run_url && dl) {
+    dl.href = r.run_url;
+    const art = document.getElementById('reportArtifact');
+    if (art && r.run_id) art.textContent = 'benchmark-' + r.run_id;
+    if (wrap) wrap.hidden = false;
+  } else if (local) { local.hidden = false; }
 }
 
 /* ===== HEATMAP ===== */
@@ -1017,6 +1090,7 @@ function initStickyMeta() {
 /* ===== INIT ===== */
 renderNavSelect();
 renderPills();
+renderReport();
 renderWorkerToggle();
 initReportType();
 renderHeatmap();

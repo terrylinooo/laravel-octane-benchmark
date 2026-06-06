@@ -57,7 +57,7 @@ jobs:
           version: '2.14.2'
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Pin PHP to 8.4 to match the app containers' runtime (the project allows
       # ^8.3, so the runner default also works) and to provide composer.
@@ -80,7 +80,7 @@ jobs:
           password: ${{ env.GH_PAT }}
 
       - name: Cache PHP packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: vendor
           key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload results + report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-${{ github.run_id }}
           path: |

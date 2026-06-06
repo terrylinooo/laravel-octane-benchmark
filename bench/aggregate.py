@@ -162,6 +162,20 @@ def main():
             for (s, w, wk), d in sorted(rss.items())
         ],
     }
+
+    # CI provenance: link back to the workflow run that produced this report so the
+    # dashboard can show "generated on X" + a download link. GitHub Actions sets
+    # GITHUB_RUN_ID / GITHUB_REPOSITORY / GITHUB_SERVER_URL automatically; on a local
+    # run they're absent and run_url stays null (the dashboard hides the link).
+    _run_id = os.environ.get("GITHUB_RUN_ID")
+    _repo = os.environ.get("GITHUB_REPOSITORY")
+    _srv = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    summary["report"] = {
+        "generated_at": (manifest or {}).get("generated_at"),
+        "run_id": _run_id,
+        "run_url": f"{_srv}/{_repo}/actions/runs/{_run_id}" if _run_id and _repo else None,
+    }
+
     with open(os.path.join(DOCS, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
 
