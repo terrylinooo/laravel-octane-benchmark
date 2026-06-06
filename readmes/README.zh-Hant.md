@@ -51,20 +51,21 @@ Benchmark 一次只跑一個 app server。其他 server 會先停掉，所以被
 | 控制項 | 值 | 為什麼重要 |
 |---|---|---|
 | Workers | 透過 `WORKER_COUNTS` 掃描；FPM `max_children` 會對齊 | worker 數量是矩陣的一部分，不是藏起來的常數；CPU 已經 oversubscribe 之後，更多 workers 反而可能更慢。 |
-| CPU | 被測 server 使用 host 的下半部核心 | 每個 server 拿到一樣的 CPU 預算。 |
-| 壓測工具 | `wrk` 使用 host 的上半部核心 | 壓測工具不會搶走被測 server 的 CPU。 |
+| CPU | 被測 server 使用扣除兩個保留核心後的所有 host cores（4-core runner 上為 `cpuset 2-3`） | 每個 server 拿到一樣的 CPU 預算。 |
+| 壓測工具 + DB | `wrk` 和 `mysql` 各使用一個獨立核心（`0` 和 `1`），不與被測 server 共用 | 壓測工具和資料庫都不會搶走被測 server 的 CPU，`/bench/db` 也不會受到 MySQL CPU contention 影響。 |
 | 記憶體 | 預設 `MEM_LIMIT=4g` | 預設 runner 上這個上限夠寬，避免記憶體壓力直接決定勝負。 |
 | OPcache | 啟用，`validate_timestamps=0` | 程式碼只編譯一次，比較接近暖機後的正式環境。 |
 | App env | `APP_ENV=production`、`APP_DEBUG=false` | 跑正式環境的程式路徑。 |
 | Sessions | `SESSION_DRIVER=array` | 路由是無狀態的，避免 session 寫入鎖影響結果。 |
 | 版本 | PHP 8.4、Laravel 13、Octane 2.17 | 版本會被釘選，也會記錄在每個 manifest 裡。 |
 
-預設 GitHub Actions runner 是 `ubuntu-24.04`，有 4 vCPU 和 16 GB RAM。腳本會把 host 切成兩半：
+預設 GitHub Actions runner 是 `ubuntu-24.04`，有 4 vCPU 和 16 GB RAM。腳本會替壓測工具與資料庫各保留一個核心，其餘核心交給被測 server：
 
-- 被測 server：`cpuset 0-1`，並設定 `cpus=2`、`mem_limit=4g`，也就是一個被 Docker 資源限制住的 2 CPU / 4 GB server
-- `wrk`：`cpuset 2-3`
+- `wrk`：`cpuset 0`
+- `mysql`：`cpuset 1`
+- 被測 server：`cpuset 2-3`，並設定 `cpus=2`、`mem_limit=4g`，也就是一個被 Docker 資源限制住的 2 CPU / 4 GB server
 
-如果在 8-core host 上跑，同一套規則會讓 server 拿 `0-3`，`wrk` 拿 `4-7`。這樣可以隔離壓測工具，但代價是 server 只拿到半台機器。共享 CI runner 還是會有雜訊，所以結果的形狀比精確數字更值得看。
+如果在 8-core host 上跑，同一套規則會讓 `wrk` 使用 core `0`、`mysql` 使用 core `1`，被測 server 則使用 `cpuset 2-7`。這樣可同時隔離壓測工具、資料庫與被測 server。共享 CI runner 還是會有雜訊，所以結果的形狀比精確數字更值得看。
 
 ## Workloads
 
@@ -185,7 +186,7 @@ working_set(N) = fixed + marginal * N
 
 - 這是單機 benchmark：看相對形狀，不要執著於精確數字。
 - Hosted runner 就算有 CPU pinning，仍然會有雜訊。
-- 預設 4-core runner 上，被測 app Docker container 只拿 2 CPUs / 4 GB RAM，另外 2 CPUs 保留給 wrk。
+- 預設 4-core runner 上，被測 app Docker container 只拿 2 CPUs / 4 GB RAM，另外兩個核心分別保留給 `wrk` 和 `mysql`。
 - 更高 worker count 不一定更好。4 workers 到 8 workers 反而下降時，應解讀成 benchmark 找到這台機器上的局部飽和點，尤其是在 CPU-bound workload 或預設 2-CPU SUT 切分下。
 - 如果 host 不支援或不遵守 `--cpuset-cpus`，相關 cell 會被標記成 `pinning=unverified`。
 - CPU workloads 預設校準在每個 request 約 20-30 ms。機器明顯更快或更慢時，可以調整 `BENCH_*` 變數。

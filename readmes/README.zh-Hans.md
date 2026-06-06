@@ -27,8 +27,8 @@
 | Control | Value | Why |
 |---|---|---|
 | Workers | **扫描**（`WORKER_COUNTS`，默认约 2/cpu 及其 ×2 → 在 2-cpu runner 上为 `4 8`）；FPM `max_children` 与之匹配 | 这是矩阵的一个维度——看每个服务器如何随 worker 数扩展。每一遍中，每个服务器（含 FPM 对照组）都用相同的数量；CPU 已经 oversubscribe 后，更多 workers 反而可能更慢 |
-| CPU | **主机的下半部**——在 4 核 runner 上为 `cpus=2`、`cpuset=0-1`（在 8 核主机上为 `cpus=4`、`cpuset=0-3`） | 每个服务器都拿到相同的核心；SUT 的 cpu 数量记录在清单的上限值中 |
-| Load generator | **`wrk` 跑在主机的上半部**（runner 上为 `cpuset=2-3`，8 核上为 `4-7`）——与 SUT 互不相交 | 压测工具**始终隔离**：它绝不会抢占 SUT 的 CPU。按单元格记录为 `generator_isolated` |
+| CPU | SUT 使用扣除两个保留核心后的所有主机核心（4 核 runner 上为 `cpuset 2-3`） | 每个服务器都获得相同的 CPU 预算 |
+| 压测工具 + DB | `wrk` 和 `mysql` 各使用一个独立核心（`0` 和 `1`），与 SUT 分离 | 压测工具和数据库都不会抢占 SUT 的 CPU，`/bench/db` 也不会受到 MySQL CPU 争用影响 |
 | Memory | `mem_limit=4g`（环境变量 `MEM_LIMIT`） | 慷慨的**相等**上限——在 16 GB runner 上从不触顶，所以没有服务器会因 OOM 受罚，峰值 RSS 读到的是真实的峰值水位（未被钳制）。设置 `MEM_LIMIT=512m` 可模拟小型 VPS 场景 |
 | OPcache | 启用，`validate_timestamps=0` | 代码只编译一次，就像 Octane 始终保持的那样 |
 | App env | `APP_ENV=production`, `APP_DEBUG=false` | 生产环境代码路径 |
@@ -37,7 +37,7 @@
 
 该工具**一次只运行一个应用服务器**（其余全部停止），因此它的 CPU/RAM 是在隔离状态下测量的，而不是在空闲同类进程的争用之下。
 
-**默认环境：一个 GitHub Actions `ubuntu-24.04` runner（4 vCPU / 16 GB RAM）。**`benchmark.sh` **把主机一分为二**：SUT 拿到下半部核心，`wrk` 压测工具拿到上半部核心，因此压测工具**始终隔离**（它绝不会抢占 SUT 的 CPU）。在 4 核 runner 上，这意味着**SUT 占 2 cpus**（`cpuset 0-1`），并设置 `cpus=2`、`mem_limit=4g`，也就是一个被 Docker 资源限制住的 2 CPU / 4 GB server； `wrk` 跑在 `2-3` 上；在 8 核主机上 SUT 拿到 4 cpus （`0-3`），`wrk` 拿到 `4-7`。代价是 SUT 只拿到**半台机器**——所以在默认 runner 上，报告针对的是一个 **2-cpu / 4 GB 服务器**，记录在清单的上限值中（`cpus=2`、`mem=4g`）。由于共享 CI runner 仍然是嘈杂的邻居，请把这些数字**仅当作相对值**来解读。
+**默认环境：GitHub Actions `ubuntu-24.04` runner（4 vCPU / 16 GB RAM）。** 脚本将 core `0` 分配给 `wrk`，core `1` 分配给 `mysql`，SUT 使用 `cpuset 2-3`，并设置 `cpus=2`、`mem_limit=4g`。在 8 核主机上，`wrk` 和 `mysql` 仍分别使用 core `0` 和 `1`，SUT 则使用 `cpuset 2-7`。这样压测工具和数据库都与 SUT 隔离。共享 CI runner 仍可能有噪声，因此应更重视结果曲线，而非精确数字。
 
 ## Workloads
 
@@ -106,7 +106,7 @@ python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
 
 - **单机，相对而非绝对。** 你的数字会有所不同；那个*形态*（谁在哪里胜出）才是可移植的发现。
 - **绑核自检。** 如果主机不遵从 `--cpuset-cpus`，每个单元格都会被标记为 `pinning=unverified`，其结果也不会作为"压测工具已隔离"来呈现。
-- **4 核 runner 上的 2-cpu / 4 GB SUT。** 为保持压测工具隔离，主机被一分为二——所以在默认 runner 上每个被测 app Docker container 都是 **2 CPU / 4 GB** server（另外 2 个核心驱动 `wrk`）。这在清单中有标注（`cpus=2`、`mem=4g`）。若要在**带**隔离压测工具的同时拥有 4-cpu SUT，你需要一台 8 核主机（届时切分会给 SUT 4 个核心，`wrk` 拿到另外 4 个）。
+- **4 核 runner 上的 2-cpu / 4 GB SUT。** 另外两个核心分别保留给 `wrk` 和 `mysql`，避免它们与 SUT 争用 CPU。
 - **更多 workers 不一定更快。** 4 workers 到 8 workers 反而下降时，应解读成 benchmark 找到 这台机器上的局部饱和点，尤其是在 CPU-bound workload 或默认 2-CPU SUT 切分下。
 - **`cpu` 组标定。** 默认值瞄准**每个请求约 20-30ms**：足够重以主导 `/bench/hello`，又足够轻以使扫描到并发 128 时不会在 4 核机器上饱和成 `wrk` 超时。在你的机器上通过 `BENCH_HASH_ITERATIONS`（2000）、`BENCH_MANDELBROT_DIM`（32）/ `BENCH_MANDELBROT_MAX_ITER`（256）以及 `BENCH_JSON_ITERATIONS`（150）来调校；`…_REPEAT` 把 mandelbrot 加重以适配更强的主机。
 
@@ -126,6 +126,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## 压测总结
+
+公开报告：[Dashboard UI](https://terrylinooo.github.io/laravel-octane-benchmark) · [结果数据](https://terrylinooo.github.io/laravel-octane-benchmark/summary.json)
+
+本次测试在受控的单机环境中进行。SUT Docker 容器限制为 `2 CPU / 4 GB RAM`，`wrk` 和 `mysql` 使用独立 CPU 核心。因此这些数据应作为相同资源限制下的相对比较，而不是所有生产环境的通用排名。
+
+- 最稳定的 p99 延迟：FrankenPHP
+- 部分 workload 的最高峰值吞吐量：Swoole / OpenSwoole
+- 最低内存占用：PHP-FPM + nginx
+- 本次配置下效率最弱：RoadRunner
+- `2 CPU` 限制下通常 4 workers 优于 8 workers
+
+FrankenPHP 在延迟稳定性、有竞争力的吞吐量和适中的内存占用之间取得了最佳整体平衡。核心结论是：选择 Octane server 时不能只看峰值 requests per second。
 
 ## License
 

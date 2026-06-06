@@ -27,8 +27,8 @@ Cada celda = `{server, workload, workers, concurrency, run}` y se almacena como 
 | Control | Valor | Por qué |
 |---|---|---|
 | Workers | **barrido** (`WORKER_COUNTS`, por defecto ~2/cpu y su ×2 → `4 8` en el runner de 2 cpu); `max_children` de FPM igualado | una dimensión de matriz: observa cómo escala cada servidor con los workers. Mismo conteo para cada servidor (incl. el control FPM) por pasada; más workers pueden ser más lentos cuando la CPU ya está sobresuscrita |
-| CPU | **la mitad inferior del host** — `cpus=2`, `cpuset=0-1` en el runner de 4 núcleos (`cpus=4`, `cpuset=0-3` en un host de 8 núcleos) | cada servidor recibe los mismos núcleos; el conteo de cpu del SUT se registra en los caps del manifest |
-| Generador de carga | **`wrk` en la mitad superior del host** (`cpuset=2-3` en el runner, `4-7` en 8 núcleos), disjunto del SUT | el generador está **siempre aislado**: nunca roba la CPU del SUT. Registrado por celda como `generator_isolated` |
+| CPU | el SUT recibe todos los núcleos por encima de los dos reservados (`cpuset 2-3` en el runner de 4 núcleos) | cada servidor recibe el mismo presupuesto de CPU |
+| Generador + DB | `wrk` y `mysql` reciben un núcleo dedicado (`0` y `1`), separados del SUT | ni el generador ni la base de datos roban CPU al SUT; `/bench/db` no sufre contención de CPU de MySQL |
 | Memoria | `mem_limit=4g` (env `MEM_LIMIT`) | techo **igual** y generoso: nunca limita en el runner de 16 GB, por lo que ningún servidor es penalizado por OOM y el RSS pico lee la verdadera marca máxima (no recortada). Configura `MEM_LIMIT=512m` para un escenario de VPS pequeño |
 | OPcache | habilitado, `validate_timestamps=0` | código compilado una sola vez, como lo mantiene Octane |
 | Entorno de la app | `APP_ENV=production`, `APP_DEBUG=false` | rutas de código de producción |
@@ -37,7 +37,7 @@ Cada celda = `{server, workload, workers, concurrency, run}` y se almacena como 
 
 El arnés ejecuta **un servidor de aplicaciones a la vez** (todos los demás detenidos) para que su CPU/RAM se midan de forma aislada, sin contención de hermanos inactivos.
 
-**Entorno por defecto: un runner `ubuntu-24.04` de GitHub Actions (4 vCPU / 16 GB RAM).**`benchmark.sh` **divide el host por la mitad**: el SUT recibe los núcleos inferiores, el generador `wrk` los núcleos superiores, de modo que el generador está **siempre aislado** (nunca roba la CPU del SUT). En el runner de 4 núcleos eso significa que el **SUT tiene 2 cpus** (`cpuset 0-1`), con `cpus=2` y `mem_limit=4g`, por lo que se comporta como un servidor Dockerizado de 2 CPU / 4 GB; `wrk` corre en `2-3`; en un host de 8 núcleos el SUT recibe 4 cpus (`0-3`) y `wrk` `4-7`. La contrapartida es que el SUT solo recibe **la mitad de la máquina**, así que en el runner por defecto los informes son para un **servidor de 2 cpu / 4 GB**, registrado en los caps del manifest (`cpus=2`, `mem=4g`). Como los runners de CI compartidos siguen siendo vecinos ruidosos, lee los números como **solo relativos**.
+**Entorno por defecto: GitHub Actions `ubuntu-24.04` (4 vCPU / 16 GB RAM).** `wrk` usa el núcleo `0`, `mysql` el núcleo `1` y el SUT `cpuset 2-3`, con `cpus=2` y `mem_limit=4g`. En un host de 8 núcleos, `wrk` y `mysql` permanecen en `0` y `1`, y el SUT usa `cpuset 2-7`. Así, generador y base de datos quedan aislados del SUT. Los runners compartidos siguen teniendo ruido, por lo que importa más la forma de los resultados que las cifras exactas.
 
 ## Cargas de trabajo
 
@@ -106,7 +106,7 @@ El ajuste separa el overhead **fijo** de framework/master/OPcache del costo **ma
 
 - **Una sola máquina, relativo no absoluto.** Tus números diferirán; la *forma* (quién gana dónde) es el hallazgo portable.
 - **Auto-verificación del pinning.** Si el host no respeta `--cpuset-cpus`, cada celda se etiqueta con `pinning=unverified` y el resultado no se presenta como aislado del generador.
-- **SUT de 2 cpu / 4 GB en el runner de 4 núcleos.** Para mantener el generador aislado, el host se divide por la mitad, así que en el runner por defecto cada contenedor Docker de app probado es un servidor de **2 CPU / 4 GB** (los otros 2 núcleos alimentan `wrk`). Está etiquetado en el manifest (`cpus=2`, `mem=4g`). Para un SUT de 4 cpu *con* un generador aislado necesitas un host de 8 núcleos (la división entonces da al SUT 4 núcleos, y a `wrk` los otros 4).
+- **SUT de 2 cpu / 4 GB en el runner de 4 núcleos.** Los otros dos núcleos se reservan por separado para `wrk` y `mysql`, evitando que compitan con el SUT.
 - **Más workers no siempre es mejor.** Trata una caída de 4 a 8 workers como que el benchmark encontró el punto local de saturación, especialmente en workloads CPU-bound o con la división SUT de 2 CPU por defecto.
 - **Calibración del grupo `cpu`.** Los valores por defecto apuntan a **~20-30ms por petición**: lo suficientemente pesados para dominar `/bench/hello`, lo suficientemente ligeros para que un barrido hasta concurrencia 128 no se sature en timeouts de `wrk` en una máquina de 4 núcleos. Ajústalos en tu máquina vía `BENCH_HASH_ITERATIONS` (2000), `BENCH_MANDELBROT_DIM` (32) /`BENCH_MANDELBROT_MAX_ITER` (256), y `BENCH_JSON_ITERATIONS` (150); `…_REPEAT` escala mandelbrot hacia arriba para hosts más potentes.
 
@@ -126,6 +126,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## Resumen del benchmark
+
+Informe publicado: [Dashboard UI](https://terrylinooo.github.io/laravel-octane-benchmark) · [Datos de resultados](https://terrylinooo.github.io/laravel-octane-benchmark/summary.json)
+
+El benchmark se ejecutó en una sola máquina controlada. El contenedor Docker del SUT se limitó a `2 CPU / 4 GB RAM`, mientras `wrk` y `mysql` usaron núcleos separados. Los datos son una comparación relativa bajo los mismos límites, no una clasificación universal para producción.
+
+- p99 más estable: FrankenPHP
+- Mayor throughput pico en algunos workloads: Swoole / OpenSwoole
+- Menor uso de memoria: PHP-FPM + nginx
+- Menor eficiencia en esta configuración: RoadRunner
+- Con el límite de `2 CPU`, normalmente 4 workers superan a 8
+
+FrankenPHP ofrece el mejor equilibrio entre estabilidad de latencia, throughput competitivo y uso moderado de memoria. Elegir un servidor Octane solo por el máximo de requests per second es insuficiente.
 
 ## License
 

@@ -27,8 +27,8 @@ Cada célula = `{server, workload, workers, concurrency, run}` e é armazenada c
 | Controle | Valor | Por quê |
 |---|---|---|
 | Workers | **varridos** (`WORKER_COUNTS`, padrão ~2/cpu e seu ×2 → `4 8` no runner de 2 cpus); `max_children` do FPM correspondente | uma dimensão da matriz — veja como cada servidor escala com os workers. Mesma contagem para cada servidor (incl. o controle FPM) por passada; mais workers podem ser mais lentos quando a CPU já está sobrescrita |
-| CPU | **a metade inferior do host** — `cpus=2`, `cpuset=0-1` no runner de 4 cores (`cpus=4`, `cpuset=0-3` num host de 8 cores) | todo servidor recebe os mesmos cores; a contagem de cpu do SUT é registrada nos caps do manifesto |
-| Gerador de carga | **`wrk` na metade superior do host** (`cpuset=2-3` no runner, `4-7` em 8 cores) — disjunto do SUT | o gerador está **sempre isolado**: ele nunca rouba a CPU do SUT. Registrado por célula como `generator_isolated` |
+| CPU | o SUT recebe todos os cores acima dos dois reservados (`cpuset 2-3` no runner de 4 cores) | todo servidor recebe o mesmo orçamento de CPU |
+| Gerador + DB | `wrk` e `mysql` recebem um core dedicado cada (`0` e `1`), separados do SUT | gerador e banco não roubam CPU do SUT; `/bench/db` evita contenção de CPU do MySQL |
 | Memória | `mem_limit=4g` (env `MEM_LIMIT`) | teto **igual** e generoso — nunca limita no runner de 16 GB, então nenhum servidor é penalizado por OOM e o pico de RSS lê a verdadeira marca d'água máxima (não restringida). Defina `MEM_LIMIT=512m` para um cenário de VPS pequeno |
 | OPcache | habilitado, `validate_timestamps=0` | código compilado uma vez, como o Octane o mantém |
 | Ambiente da app | `APP_ENV=production`, `APP_DEBUG=false` | caminhos de código de produção |
@@ -37,7 +37,7 @@ Cada célula = `{server, workload, workers, concurrency, run}` e é armazenada c
 
 O harness executa **um servidor de aplicação por vez** (todos os outros parados) de modo que sua CPU/RAM seja medida em isolamento, não sob contenção de irmãos ociosos.
 
-**Ambiente padrão: um runner `ubuntu-24.04` do GitHub Actions (4 vCPU / 16 GB RAM).** O `benchmark.sh` **divide o host ao meio**: o SUT recebe os cores inferiores, o gerador `wrk` os cores superiores, de modo que o gerador esteja **sempre isolado** (ele nunca rouba a CPU do SUT). No runner de 4 cores isso significa que o **SUT tem 2 cpus** (`cpuset 0-1`), com `cpus=2` e `mem_limit=4g`, ou seja, um servidor Docker-contained de 2 CPU / 4 GB; o `wrk` roda em `2-3`; num host de 8 cores o SUT recebe 4 cpus (`0-3`) e o `wrk` `4-7`. O trade-off é que o SUT só recebe **metade da máquina** — então no runner padrão os relatórios são para um **servidor de 2 cpus / 4 GB**, registrado nos caps do manifesto (`cpus=2`, `mem=4g`). Como runners de CI compartilhados ainda são vizinhos ruidosos, leia os números como **apenas relativos**.
+**Ambiente padrão: GitHub Actions `ubuntu-24.04` (4 vCPU / 16 GB RAM).** `wrk` usa o core `0`, `mysql` o core `1` e o SUT `cpuset 2-3`, com `cpus=2` e `mem_limit=4g`. Num host de 8 cores, `wrk` e `mysql` permanecem em `0` e `1`, enquanto o SUT usa `cpuset 2-7`. Gerador e banco ficam isolados do SUT. Runners compartilhados continuam ruidosos; valorize mais a forma dos resultados do que números exatos.
 
 ## Workloads
 
@@ -106,7 +106,7 @@ O ajuste separa o overhead **fixo** do framework/master/OPcache do custo **margi
 
 - **Máquina única, relativo e não absoluto.** Seus números vão diferir; o *formato* (quem vence onde) é o achado portável.
 - **Self-check de pinning.** Se o host não honrar `--cpuset-cpus`, cada célula é marcada com `pinning=unverified` e o resultado não é apresentado como isolado por gerador.
-- **SUT de 2 cpus / 4 GB no runner de 4 cores.** Para manter o gerador isolado, o host é dividido ao meio — então no runner padrão cada app Docker container testado é um servidor de **2 CPU / 4 GB** (os outros 2 cores acionam o `wrk`). Está rotulado no manifesto (`cpus=2`, `mem=4g`). Para um SUT de 4 cpus *com* um gerador isolado você precisa de um host de 8 cores (a divisão então dá ao SUT 4 cores e ao `wrk` os outros 4).
+- **SUT de 2 cpus / 4 GB no runner de 4 cores.** Os outros dois cores são reservados separadamente para `wrk` e `mysql`, evitando competição com o SUT.
 - **Mais workers não são automaticamente melhores.** Uma queda de 4 para 8 workers deve ser lida como o ponto local de saturação encontrado pelo benchmark, especialmente em workloads CPU-bound ou na divisão SUT padrão de 2 CPU.
 - **Calibração do grupo `cpu`.** Os padrões miram em **~20-30ms por requisição**: pesado o suficiente para dominar `/bench/hello`, leve o suficiente para que uma varredura até a concorrência 128 não sature em timeouts do `wrk` numa máquina de 4 cores. Ajuste na sua máquina via `BENCH_HASH_ITERATIONS` (2000), `BENCH_MANDELBROT_DIM` (32) /`BENCH_MANDELBROT_MAX_ITER` (256), e `BENCH_JSON_ITERATIONS` (150); `…_REPEAT` escala o mandelbrot para cima para hosts mais pesados.
 
@@ -126,6 +126,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## Resumo do benchmark
+
+Relatório publicado: [Dashboard UI](https://terrylinooo.github.io/laravel-octane-benchmark) · [Dados dos resultados](https://terrylinooo.github.io/laravel-octane-benchmark/summary.json)
+
+O benchmark foi executado em uma única máquina controlada. O container Docker do SUT foi limitado a `2 CPU / 4 GB RAM`, enquanto `wrk` e `mysql` usaram cores separados. Os dados são uma comparação relativa sob os mesmos limites, não um ranking universal para produção.
+
+- Latência p99 mais estável: FrankenPHP
+- Maior throughput de pico em alguns workloads: Swoole / OpenSwoole
+- Menor uso de memória: PHP-FPM + nginx
+- Eficiência mais fraca nesta configuração: RoadRunner
+- Sob o limite de `2 CPU`, normalmente 4 workers são melhores que 8
+
+FrankenPHP oferece o melhor equilíbrio entre estabilidade de latência, throughput competitivo e uso moderado de memória. A escolha de um servidor Octane não deve se basear apenas no máximo de requests per second.
 
 ## License
 

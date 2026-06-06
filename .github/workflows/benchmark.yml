@@ -1,11 +1,11 @@
 name: Benchmark
 
 # The project's default measurement environment: a GitHub Actions ubuntu-24.04
-# runner = 4 vCPU / 16 GB RAM. benchmark.sh splits the host in half: the SUT gets the
-# lower cores (2 cpus, cpuset 0-1) and the wrk generator the upper cores (2-3), so the
-# generator is always isolated. Reports are therefore for a 2-cpu server (recorded in
-# the manifest caps). Shared runners are noisy neighbors, so treat the numbers as
-# RELATIVE-ONLY (who wins, where it flips) with run-to-run spread shown.
+# runner = 4 vCPU / 16 GB RAM. benchmark.sh gives wrk core 0, MySQL core 1, and the
+# SUT cores 2-3 (2 cpus), keeping the generator and database off the measured server.
+# Reports are therefore for a 2-cpu server (recorded in the manifest caps). Shared
+# runners are noisy neighbors, so treat the numbers as RELATIVE-ONLY (who wins, where
+# it flips) with run-to-run spread shown.
 #
 # Composer runs on the host (setup-php below); the app servers run in Docker.
 # Manual only by default — the full matrix is hours; use the inputs to scale.

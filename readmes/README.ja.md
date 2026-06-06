@@ -27,8 +27,8 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 | Control | Value | Why |
 |---|---|---|
 | Workers | **スイープ**（`WORKER_COUNTS`、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは `4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
-| CPU | **ホストの下半分**—4 コアランナーで `cpus=2`、`cpuset=0-1`（8 コアホストでは `cpus=4`、`cpuset=0-3`） | どのサーバーも同じコアを得る。SUT の cpu 数はマニフェストの上限に記録される |
-| Load generator | **ホストの上半分での `wrk`**（ランナーでは `cpuset=2-3`、8 コアでは `4-7`）—SUT とは交わらない | 生成ツールは **常に分離されている**。SUT の CPU を決して奪わない。セルごとに `generator_isolated` として記録される |
+| CPU | SUT は予約済みの 2 コアを除くすべてのホストコアを使用（4 コアランナーでは `cpuset 2-3`） | どのサーバーにも同じ CPU 予算を与える |
+| 負荷生成 + DB | `wrk` と `mysql` に専用コアを 1 つずつ割り当てる（`0` と `1`）。SUT とは分離 | 生成ツールと DB は SUT の CPU を奪わず、`/bench/db` は MySQL の CPU 競合を受けない |
 | Memory | `mem_limit=4g`（env `MEM_LIMIT`） | 寛大で **均等な** 上限—16 GB ランナーでは決して縛られないため、どのサーバーも OOM ペナルティを受けず、ピーク RSS は真の最高水位を読み取る（クランプされない）。小規模 VPS シナリオには `MEM_LIMIT=512m` を設定 |
 | OPcache | 有効、`validate_timestamps=0` | Octane が保持するのと同様に、コードを一度だけコンパイル |
 | App env | `APP_ENV=production`、`APP_DEBUG=false` | 本番のコードパス |
@@ -37,7 +37,7 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 
 ハーネスは **一度に 1 つのアプリサーバーのみ** を実行する（他はすべて停止）ため、その CPU/RAM はアイドル状態の兄弟プロセスとの競合下ではなく、分離して計測されます。
 
-**デフォルト環境: GitHub Actions `ubuntu-24.04` ランナー（4 vCPU / 16 GB RAM）。**`benchmark.sh` は **ホストを半分に分割** します。SUT は下位コアを、`wrk` 生成ツールは上位コアを得るので、生成ツールは **常に分離されています**（SUT の CPU を決して奪わない）。4 コアランナーでは、**SUT は 2 cpus**（`cpuset 0-1`）で、`cpus=2`、`mem_limit=4g` が設定されます。つまり Docker により 2 CPU / 4 GB に制限されたサーバーで、`wrk` は `2-3` で動きます。8 コアホストでは SUT が 4 cpus（`0-3`）、`wrk` が `4-7` を得ます。トレードオフは、SUT が **箱の半分しか** 得られないこと—なので、デフォルトランナーではレポートは **2-cpu / 4 GB サーバー** についてのもので、マニフェストの上限に記録されます（`cpus=2`、`mem=4g`）。共有 CI ランナーは依然として騒がしい隣人なので、数値は **相対的なものとしてのみ** 読んでください。
+**デフォルト環境: GitHub Actions `ubuntu-24.04`（4 vCPU / 16 GB RAM）。** `wrk` は core `0`、`mysql` は core `1`、SUT は `cpuset 2-3` を使用し、`cpus=2` と `mem_limit=4g` が設定されます。8 コアホストでは `wrk` と `mysql` は `0` と `1` のまま、SUT は `cpuset 2-7` を使用します。これにより生成ツールと DB は SUT から分離されます。共有 CI ランナーにはノイズがあるため、正確な数値より結果の形を重視してください。
 
 ## Workloads
 
@@ -106,7 +106,7 @@ python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
 
 - **単一マシン、絶対ではなく相対。** あなたの数値は異なります。移植可能な発見は *形* （どこで誰が勝つか）です。
 - **Pinning セルフチェック。** ホストが `--cpuset-cpus` を尊重しない場合、すべてのセルは `pinning=unverified` とタグ付けされ、結果は生成ツール分離として提示されません。
-- **4 コアランナー上の 2-cpu / 4 GB SUT。** 生成ツールを分離するため、ホストは半分に分割されます— なのでデフォルトランナーでは各 app Docker container は **2 CPU / 4 GB** サーバーです（残りの 2 コアが `wrk` を駆動）。マニフェストにラベル付けされます（`cpus=2`、`mem=4g`）。生成ツールを分離した *まま* の 4-cpu SUT には 8 コアホストが必要です（その分割では SUT に 4 コア、`wrk` に残りの 4 コアが与えられる）。
+- **4 コアランナー上の 2-cpu / 4 GB SUT。** 残りの 2 コアは `wrk` と `mysql` に 1 つずつ予約され、SUT との CPU 競合を防ぎます。
 - **ワーカー数が多いほど速いとは限らない。** 4 workers から 8 workers で低下する場合は、このマシン上の 局所的な飽和点を benchmark が見つけたと解釈してください。特に CPU-bound workload やデフォルトの 2-CPU SUT 分割ではそうです。
 - **`cpu` グループのキャリブレーション。** デフォルトは **~20-30ms/リクエスト** を狙います。`/bench/hello` を支配するのに十分重く、4 コアの箱で並行数 128 までのスイープが `wrk` のタイムアウトに飽和しない程度に軽い。`BENCH_HASH_ITERATIONS`（2000）、`BENCH_MANDELBROT_DIM`（32）/ `BENCH_MANDELBROT_MAX_ITER`（256）、`BENCH_JSON_ITERATIONS`（150）で自分のマシンに合わせて調整してください。`…_REPEAT` はより重いホスト向けにマンデルブロをスケールアップします。
 
@@ -126,6 +126,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## ベンチマーク概要
+
+公開レポート: [Dashboard UI](https://terrylinooo.github.io/laravel-octane-benchmark) · [結果データ](https://terrylinooo.github.io/laravel-octane-benchmark/summary.json)
+
+このベンチマークは制御された単一マシン環境で実行しました。SUT の Docker コンテナは `2 CPU / 4 GB RAM` に制限され、`wrk` と `mysql` は別の CPU コアを使用します。したがって、これは同じリソース制限下での相対比較であり、すべての本番環境に通用する順位ではありません。
+
+- p99 レイテンシが最も安定: FrankenPHP
+- 一部のワークロードでピークスループットが最高: Swoole / OpenSwoole
+- メモリ使用量が最小: PHP-FPM + nginx
+- この構成で効率が最も低い: RoadRunner
+- `2 CPU` 制限では通常 8 workers より 4 workers が有利
+
+FrankenPHP はレイテンシの安定性、競争力のあるスループット、中程度のメモリ使用量のバランスが最良でした。Octane server はピーク requests per second だけで選ぶべきではありません。
 
 ## License
 

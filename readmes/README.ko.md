@@ -27,8 +27,8 @@ Laravel Octane 애플리케이션 서버(**Swoole**, **OpenSwoole**, **RoadRunne
 | Control | Value | Why |
 |---|---|---|
 | 워커 | **스윕**(`WORKER_COUNTS`, 기본값 ~2/cpu 와 그 ×2 → 2-cpu 러너에서 `4 8`); FPM `max_children` 도 일치 | 매트릭스 차원 — 각 서버가 워커에 따라 어떻게 확장되는지 확인. 패스마다 모든 서버(FPM 대조군 포함) 에 동일한 수. CPU 가 oversubscribe 되면 워커를 더 늘리는 것이 오히려 느릴 수 있음 |
-| CPU | **호스트의 아래쪽 절반** — 4 코어 러너에서 `cpus=2`, `cpuset=0-1`(8 코어 호스트에서는 `cpus=4`, `cpuset=0-3`) | 모든 서버가 동일한 코어를 받음; SUT cpu 수는 매니페스트 상한에 기록됨 |
-| 부하 생성기 | **호스트의 위쪽 절반에서 `wrk`**(러너에서 `cpuset=2-3`, 8 코어에서 `4-7`) — SUT 와 분리 | 생성기는 **항상 격리됨**: SUT 의 CPU 를 절대 빼앗지 않음. 셀별로 `generator_isolated` 로 기록 |
+| CPU | SUT 는 예약된 두 코어를 제외한 모든 호스트 코어를 사용(4 코어 러너에서는 `cpuset 2-3`) | 모든 서버에 동일한 CPU 예산 제공 |
+| 부하 생성기 + DB | `wrk` 와 `mysql` 에 전용 코어를 하나씩 할당(`0`, `1`), SUT 와 분리 | 생성기와 DB 가 SUT CPU 를 빼앗지 않으며 `/bench/db` 에 MySQL CPU 경합이 없음 |
 | 메모리 | `mem_limit=4g`(환경 변수 `MEM_LIMIT`) | 넉넉한 **동일** 상한 — 16 GB 러너에서는 절대 걸리지 않으므로 어느 서버도 OOM 페널티를 받지 않고 peak RSS 가 진짜 최고 수위를 보여줌(클램핑되지 않음). 소형 VPS 시나리오는 `MEM_LIMIT=512m` 로 설정 |
 | OPcache | 활성화, `validate_timestamps=0` | 코드는 한 번만 컴파일됨 (Octane 이 유지하는 방식과 동일) |
 | 앱 환경 | `APP_ENV=production`, `APP_DEBUG=false` | 프로덕션 코드 경로 |
@@ -37,7 +37,7 @@ Laravel Octane 애플리케이션 서버(**Swoole**, **OpenSwoole**, **RoadRunne
 
 이 하니스는 **한 번에 하나의 앱 서버만** 실행하므로(나머지는 모두 정지), 해당 서버의 CPU/RAM 은 유휴 상태인 형제 서버와의 경합이 아니라 격리된 상태에서 측정됩니다.
 
-**기본 환경: GitHub Actions `ubuntu-24.04` 러너(4 vCPU / 16 GB RAM).**`benchmark.sh` 는 **호스트를 절반으로 나눕니다**: SUT 는 아래쪽 코어를, `wrk` 생성기는 위쪽코어를 받아 생성기가 **항상 격리되도록** 합니다(SUT 의 CPU 를 절대 빼앗지 않음). 4 코어러너에서는 **SUT 가 2 cpu**(`cpuset 0-1`) 이고 `cpus=2`, `mem_limit=4g` 가 설정됩니다. 즉 Docker 로 2 CPU / 4 GB 에 제한된 server 이며, `wrk` 는 `2-3` 에서 실행됩니다. 8 코어 호스트에서는 SUT 가 4 cpu(`0-3`) 를 받고 `wrk` 는 `4-7` 을 받습니다. 절충점은 SUT 가 **머신의 절반만** 받는다는것입니다 — 그래서 기본 러너에서의 리포트는 **2-cpu / 4 GB 서버**에 대한 것이며, 매니페스트상한(`cpus=2`, `mem=4g`) 에 기록됩니다. 공유 CI 러너는 여전히 시끄러운 이웃이 있으므로, 수치는**상대값 전용**으로 읽으세요.
+**기본 환경: GitHub Actions `ubuntu-24.04` 러너(4 vCPU / 16 GB RAM).** `wrk` 는 core `0`, `mysql` 은 core `1`, SUT 는 `cpuset 2-3` 을 사용하며 `cpus=2`, `mem_limit=4g` 가 적용됩니다. 8 코어 호스트에서는 `wrk` 와 `mysql` 이 `0`, `1` 을 유지하고 SUT 는 `cpuset 2-7` 을 사용합니다. 따라서 생성기와 DB 가 SUT 와 격리됩니다. 공유 CI 러너에는 노이즈가 있으므로 정확한 수치보다 결과 곡선의 형태를 중시하세요.
 
 ## Workloads
 
@@ -106,7 +106,7 @@ python3 bench/mem_profile.py  # linear fit working_set(N) = fixed + marginal·N
 
 - **단일 머신, 절대값이 아니라 상대값.** 여러분의 수치는 다를 것입니다. 이식 가능한 발견은 *형태*(누가 어디에서 이기는지) 입니다.
 - **고정 자체 점검.** 호스트가 `--cpuset-cpus` 를 따르지 않으면, 모든 셀에 `pinning=unverified` 태그가 붙고 그 결과는 생성기 격리된 것으로 제시되지 않습니다.
-- **4 코어 러너의 2-cpu / 4 GB SUT.** 생성기를 격리된 상태로 유지하기 위해 호스트를 절반으로 나눕니다 — 그래서 기본 러너에서는 각 app Docker container 가 **2 CPU / 4 GB** server 입니다(나머지 2 코어는 `wrk` 를구동). 이는 매니페스트(`cpus=2`, `mem=4g`) 에 표시됩니다. 생성기가 격리된 *동시에* 4-cpu SUT 를원한다면 8 코어 호스트가 필요합니다(그러면 분할 시 SUT 가 4 코어, `wrk` 가 나머지 4 코어를 받음).
+- **4 코어 러너의 2-cpu / 4 GB SUT.** 나머지 두 코어는 `wrk` 와 `mysql` 에 하나씩 예약되어 SUT 와의 CPU 경합을 방지합니다.
 - **워커 수가 많다고 항상 더 빠른 것은 아닙니다.** 4 workers 에서 8 workers 로 올렸을 때 하락하면, 특히 CPU-bound workload 또는 기본 2-CPU SUT 분할에서는 이 머신의 국소 포화점을 benchmark 가 찾은 것으로 해석하세요.
 - **`cpu` 그룹 보정.** 기본값은 **요청당 ~20-30ms**를 목표로 합니다: `/bench/hello` 를 분명하게 지배할 만큼 무겁고, 동시성 128 까지의 스윕이 4 코어 박스에서 `wrk` 타임아웃으로포화되지 않을 만큼 가볍게. `BENCH_HASH_ITERATIONS`(2000), `BENCH_MANDELBROT_DIM`(32) /`BENCH_MANDELBROT_MAX_ITER`(256), `BENCH_JSON_ITERATIONS`(150) 로 여러분의 박스에 맞게조정하세요; `…_REPEAT` 은 더 무거운 호스트를 위해 mandelbrot 를 키웁니다.
 
@@ -126,6 +126,20 @@ database/migrations/*bench_items*  # seeds the /bench/db table
 .github/workflows/benchmark.yml    # CI: run the matrix on ubuntu-24.04 (4 vCPU)
 readmes/                    # README translations (10 languages)
 ```
+
+## 벤치마크 요약
+
+공개 보고서: [Dashboard UI](https://terrylinooo.github.io/laravel-octane-benchmark) · [결과 데이터](https://terrylinooo.github.io/laravel-octane-benchmark/summary.json)
+
+이 벤치마크는 통제된 단일 머신 환경에서 실행되었습니다. SUT Docker 컨테이너는 `2 CPU / 4 GB RAM` 으로 제한되고 `wrk` 와 `mysql` 은 별도 CPU 코어를 사용합니다. 따라서 결과는 동일한 리소스 제한에서의 상대 비교이며 모든 프로덕션 환경의 보편적 순위가 아닙니다.
+
+- 가장 안정적인 p99 지연 시간: FrankenPHP
+- 일부 workload 의 최고 피크 처리량: Swoole / OpenSwoole
+- 가장 낮은 메모리 사용량: PHP-FPM + nginx
+- 이 구성에서 가장 낮은 효율: RoadRunner
+- `2 CPU` 제한에서는 보통 8 workers 보다 4 workers 가 유리
+
+FrankenPHP 는 지연 안정성, 경쟁력 있는 처리량, 적당한 메모리 사용량 사이에서 가장 좋은 균형을 보였습니다. Octane server 를 선택할 때 최고 requests per second 만 보면 안 됩니다.
 
 ## License
 
