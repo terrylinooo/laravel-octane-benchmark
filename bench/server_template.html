@@ -131,7 +131,13 @@
     border-bottom: 1px solid var(--border);
     background: var(--card-2);
     padding: 11px 24px;
+    position: sticky; top: 62px; z-index: 50;
   }
+  /* When stuck (scrolled), collapse to just the centered view options */
+  .metastrip.is-stuck { padding-top: 7px; padding-bottom: 7px; }
+  .metastrip.is-stuck .pills { display: none; }
+  .metastrip.is-stuck .metastrip-row { justify-content: center; }
+  .metastrip.is-stuck .view-options { margin-left: 0; }
   .metastrip-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .pills { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; flex: 1; min-width: 0; }
   .pill {
@@ -173,9 +179,9 @@
   /* ===== Layout ===== */
   .shell { display: flex; align-items: flex-start; }
   .sidebar {
-    position: sticky; top: 62px; align-self: flex-start;
+    position: sticky; top: calc(62px + var(--meta-h, 0px)); align-self: flex-start;
     width: 188px; flex-shrink: 0; padding: 24px 14px;
-    height: calc(100vh - 62px);
+    height: calc(100vh - 62px - var(--meta-h, 0px));
   }
   .sidebar .nav-label {
     font-size: 10.5px; font-weight: 650; text-transform: uppercase;
@@ -1063,6 +1069,22 @@ function initScrollSpy() {
   document.querySelectorAll('main section').forEach(s => obs.observe(s));
 }
 
+/* ===== STICKY META STRIP =====
+   Sticks under the 62px header; collapses to the centered view options once
+   scrolled, and publishes its height as --meta-h so the sidebar sits below it. */
+function initStickyMeta() {
+  const meta = document.querySelector('.metastrip');
+  if (!meta) return;
+  const sync = () => {
+    const pinned = window.scrollY > 2;
+    meta.classList.toggle('is-stuck', pinned);
+    document.documentElement.style.setProperty('--meta-h', pinned ? meta.offsetHeight + 'px' : '0px');
+  };
+  window.addEventListener('scroll', sync, { passive: true });
+  window.addEventListener('resize', sync);
+  sync();
+}
+
 /* ===== WORKER-COUNT TOGGLE ===== */
 function renderWorkerToggle() {
   const el = document.getElementById('workerToggle');
@@ -1122,6 +1144,7 @@ restyleCharts();
 renderRankTable();
 renderMemory();
 initScrollSpy();
+initStickyMeta();
 </script>
 </body>
 </html>
