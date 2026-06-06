@@ -49,20 +49,21 @@ The benchmark runs one app server at a time. Idle sibling containers are stopped
 | Control | Value | Why it matters |
 |---|---|---|
 | Workers | Swept through `WORKER_COUNTS`; FPM `max_children` is matched | Worker count is part of the matrix, not a hidden constant; more workers can be slower once CPU is oversubscribed. |
-| CPU | The server under test gets the lower half of the host cores | Every server gets the same CPU budget. |
-| Load generator | `wrk` runs on the upper half of the host cores | The load generator does not steal CPU from the server being measured. |
+| CPU | The server under test gets every host core above the two reserved ones (`cpuset 2-3` on the 4-core runner) | Every server gets the same CPU budget. |
+| Load generator + DB | `wrk` and `mysql` each get a dedicated core (`0` and `1`), off the server's cores | The load generator and the database never steal CPU from the server being measured, and `/bench/db` has no MySQL contention. |
 | Memory | `MEM_LIMIT=4g` by default | The limit is equal and generous on the default runner, so memory pressure does not decide the winner. |
 | OPcache | Enabled with `validate_timestamps=0` | Code is compiled once, closer to a warm production setup. |
 | App env | `APP_ENV=production`, `APP_DEBUG=false` | Benchmarks production code paths. |
 | Sessions | `SESSION_DRIVER=array` | Stateless routes avoid session write locks. |
 | Versions | PHP 8.4, Laravel 13, Octane 2.17 | Versions are pinned and recorded in each manifest. |
 
-On the default GitHub Actions runner (`ubuntu-24.04`, 4 vCPU, 16 GB RAM), the script splits the host in half:
+On the default GitHub Actions runner (`ubuntu-24.04`, 4 vCPU, 16 GB RAM), the script reserves one core for the load generator and one for the database, then gives the rest to the server under test:
 
-- server under test: `cpuset 0-1`, with `cpus=2` and `mem_limit=4g`, so it behaves like a Docker-contained 2-cpu / 4 GB server
-- `wrk`: `cpuset 2-3`
+- `wrk`: `cpuset 0`
+- `mysql`: `cpuset 1`
+- server under test: `cpuset 2-3`, with `cpus=2` and `mem_limit=4g`, so it behaves like a Docker-contained 2-cpu / 4 GB server
 
-On an 8-core host, the same rule gives the server `0-3` and `wrk` `4-7`. This keeps the generator isolated, but it also means the server only gets half of the machine. Shared CI runners can still be noisy, so read the shape of the results more seriously than the exact numbers.
+On an 8-core host, the same rule keeps `wrk` on core `0` and `mysql` on core `1`, and gives the server `cpuset 2-7`. This keeps the generator and the database isolated from the server. Shared CI runners can still be noisy, so read the shape of the results more seriously than the exact numbers.
 
 ## Workloads
 
@@ -183,7 +184,7 @@ That split is more useful than `RSS / workers`, because average RSS per worker f
 
 - Single-machine benchmark: use the relative shape, not the exact numbers.
 - Hosted runners are noisy, even with CPU pinning.
-- On the default 4-core runner, the server under test gets 2 CPUs because the other 2 CPUs are reserved for wrk. The tested Docker app container is also capped at 4 GB RAM.
+- On the default 4-core runner, the server under test gets 2 CPUs because the other 2 are reserved one for `wrk` and one for `mysql`. The tested Docker app container is also capped at 4 GB RAM.
 - Higher worker counts are not automatically better. Treat a drop from 4 to 8 workers as the benchmark finding the local saturation point, especially on CPU-bound workloads or the default 2-CPU SUT split.
 - If the host does not honor `--cpuset-cpus`, affected cells are tagged `pinning=unverified`.
 - CPU workloads are calibrated to land around 20-30 ms per request by default. Tune the `BENCH_*` variables if your machine is much faster or slower.

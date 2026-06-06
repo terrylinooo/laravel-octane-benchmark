@@ -4,11 +4,11 @@
 #
 # Runs ONE app server at a time (others stopped), sweeps concurrency, and writes
 # one JSON result per cell with an embedded manifest. The whole point is fairness:
-#   * the host is split in half: the SUT gets the LOWER half of the cores, the wrk
-#     generator the UPPER half, so the generator is always isolated (never steals the
-#     SUT's CPU). On the default 4-core GitHub Actions runner that's SUT=2 cpus
-#     (cpuset 0-1) + wrk=cpuset 2-3; on an 8-core host it's SUT 0-3 + wrk 4-7. The SUT
-#     cpu count is recorded in the manifest caps so reports are labelled honestly.
+#   * dedicated cores: wrk (load generator) -> core 0, mysql -> core 1, and the SUT
+#     gets all the rest (cores 2..N-1). The generator and the DB are always isolated —
+#     they never steal the SUT's cores, and /bench/db has no mysql contention. On the
+#     default 4-core runner that's wrk=0, mysql=1, SUT=cpuset 2-3 (2 cpus); on an 8-core
+#     host the SUT gets cpuset 2-7. The SUT cpu count is recorded in the manifest caps.
 #   * workers = ~2 per SUT cpu (4 on the 2-cpu runner, 8 on 8 cores), FPM matched
 #     via pool.conf; opcache + production parity
 #   * latency percentiles (p50/p99) from wrk are the headline metric
@@ -39,20 +39,21 @@ SETTLE="${SETTLE:-3}"          # teardown settle delay between (server,workload)
 RESULTS_DIR="${RESULTS_DIR:-results}"
 APP_SERVICES="swoole openswoole roadrunner frankenphp fpm nginx"
 
-# ---- core placement: split the host in half (2+2 on the 4-core CI runner) --------
-# The SUT gets the LOWER half of the cores, the wrk generator the UPPER half, so the
-# generator is ALWAYS isolated (disjoint core sets) — it never steals the SUT's CPU.
-# On the default 4-core runner that's SUT=cpuset 0-1 (2 cpus) + wrk=cpuset 2-3; on an
-# 8-core host it's SUT 0-3 + wrk 4-7. The trade-off is the SUT only gets half the box
-# (2 cpus on CI) — the manifest caps record that so reports are labelled honestly.
+# ---- core placement: a dedicated core for the generator and the DB ---------------
+# wrk (load generator) -> core 0, mysql -> core 1, and the SUT (app server under test)
+# gets all the rest (cores 2..N-1). Everything is isolated: neither the generator nor
+# the database ever steals the SUT's cores, and /bench/db measures the SUT without
+# mysql contention. On the 4-core CI runner: wrk=0, mysql=1, SUT=cpuset 2-3 (2 cpus);
+# on an 8-core host the SUT gets cpuset 2-7 (6 cpus). The SUT cpu count is recorded in
+# the manifest caps so reports are labelled honestly. (Needs >= 3 cores.)
 NPROC="$(nproc)"
-HALF=$(( NPROC / 2 )); [ "$HALF" -lt 1 ] && HALF=1
-SUT_CPUS="${SUT_CPUS:-$HALF}"
-SUT_CPUSET="${SUT_CPUSET:-0-$((HALF - 1))}"
-WRK_CPUSET="${WRK_CPUSET:-$HALF-$((NPROC - 1))}"
-export SUT_CPUS SUT_CPUSET WRK_CPUSET
-# Isolated whenever the two core sets differ (always, by construction of the split).
-GEN_ISOLATED=true; [ "$SUT_CPUSET" = "$WRK_CPUSET" ] && GEN_ISOLATED=false
+WRK_CPUSET="${WRK_CPUSET:-0}"
+MYSQL_CPUSET="${MYSQL_CPUSET:-1}"
+SUT_CPUS="${SUT_CPUS:-$(( NPROC - 2 ))}"; [ "$SUT_CPUS" -lt 1 ] && SUT_CPUS=1
+SUT_CPUSET="${SUT_CPUSET:-2-$((NPROC - 1))}"
+export SUT_CPUS SUT_CPUSET WRK_CPUSET MYSQL_CPUSET
+# Generator + DB are isolated from the SUT by construction (cores 0,1 vs 2..N-1).
+GEN_ISOLATED=true
 # Worker-count sweep (a matrix dimension). Default = Octane's ~2 workers/CPU and its
 # x2: 4 and 8 on the 2-cpu runner (8 and 16 on an 8-core host). OCTANE_WORKERS is set
 # per pass inside the loop; compose reads it and the FPM pool.conf is matched.
@@ -136,10 +137,10 @@ build_manifest() {
     --arg worker_counts "$WORKER_COUNTS" \
     --arg caps "cpus=${SUT_CPUS},cpuset=${SUT_CPUSET},mem=${MEM_LIMIT:-4g}" \
     --arg wrk "wrk -t${THREADS} -d${DURATION}s --timeout ${TIMEOUT} --latency" \
-    --arg wrk_cpuset "$WRK_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
+    --arg wrk_cpuset "$WRK_CPUSET" --arg mysql_cpuset "$MYSQL_CPUSET" --argjson gen_isolated "$GEN_ISOLATED" \
     '{php:$php, laravel:$laravel, octane:$octane, worker_counts:$worker_counts, caps:$caps,
       commit:$commit, host:$host, nproc:($nproc|tonumber), wrk_cmd:$wrk,
-      wrk_cpuset:$wrk_cpuset, generator_isolated:$gen_isolated, generated_at:$date}'
+      wrk_cpuset:$wrk_cpuset, mysql_cpuset:$mysql_cpuset, generator_isolated:$gen_isolated, generated_at:$date}'
 }
 
 # ---- one wrk run -> writes a cell file ----------------------------------------
@@ -171,7 +172,7 @@ run_cell() {
 echo "Servers:       $SERVERS"
 echo "Workloads:     $WORKLOADS"
 echo "Concurrencies: $CONCURRENCIES   Runs/cell: $RUNS   Duration: ${DURATION}s   Warmup: ${WARMUP}s"
-echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   workers=[$WORKER_COUNTS]   generator_isolated=$GEN_ISOLATED"
+echo "Cores:         nproc=$NPROC   SUT=${SUT_CPUS}cpu (cpuset $SUT_CPUSET)   wrk=cpuset $WRK_CPUSET   mysql=cpuset $MYSQL_CPUSET   workers=[$WORKER_COUNTS]   isolated=$GEN_ISOLATED"
 [ "$GEN_ISOLATED" = false ] && echo "  ! host too small to split — generator shares the SUT's cores (co-resident), relative-only."
 echo
 

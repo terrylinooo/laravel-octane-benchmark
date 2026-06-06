@@ -17,23 +17,23 @@ name: laravel-octane-benchmark
 # Fairness knobs (held identical across every server):
 #   * workers = ~2 per SUT cpu (OCTANE_WORKERS; FPM pm=static, max_children matched
 #     by benchmark.sh) -> 4 on the 2-cpu runner, 8 on an 8-core host
-#   * SUT_CPUS + SUT_CPUSET -> the "system under test" gets the host's LOWER half of
-#     cores. benchmark.sh splits the host: SUT=2 cpus / cpuset 0-1 on the 4-core CI
-#     runner, SUT=4 / cpuset 0-3 on an 8-core host. Defaults here = the CI case.
+#   * SUT_CPUS + SUT_CPUSET -> the "system under test" gets cores 2..N-1 (all but the
+#     generator's and DB's dedicated cores). benchmark.sh sets SUT=2 cpus / cpuset 2-3
+#     on the 4-core CI runner, SUT=6 / cpuset 2-7 on an 8-core host.
 #   * mem_limit=4g (env MEM_LIMIT) -> generous EQUAL ceiling. The 16 GB runner has
 #     headroom (one server at a time), so this never binds in practice: no server is
 #     OOM-penalized and peak RSS reads the true high-water mark instead of being
 #     clamped at the limit. Set MEM_LIMIT=512m for a deliberate small-VPS scenario.
-#   * wrk pinned via ${WRK_CPUSET} = the host's UPPER half (2-3 on CI, 4-7 on 8-core),
-#     disjoint from the SUT, so the load generator is ALWAYS isolated (never steals
-#     the SUT's CPU). Defaults to 2-3 if invoked without benchmark.sh.
+#   * wrk -> core 0 (${WRK_CPUSET}), mysql -> core 1 (${MYSQL_CPUSET}) — each on its own
+#     dedicated core, disjoint from the SUT, so the load generator and the database are
+#     ALWAYS isolated (never steal the SUT's CPU) and /bench/db has no mysql contention.
 #   * opcache parity, APP_ENV=production, SESSION_DRIVER=array (stateless endpoints)
 
 x-octane: &octane
   working_dir: /var/www/html
   restart: unless-stopped
   cpus: "${SUT_CPUS:-2}"
-  cpuset: "${SUT_CPUSET:-0-1}"
+  cpuset: "${SUT_CPUSET:-2-3}"
   mem_limit: "${MEM_LIMIT:-4g}"
   volumes:
     - ./:/var/www/html
@@ -115,7 +115,7 @@ services:
     working_dir: /var/www/html
     restart: unless-stopped
     cpus: "${SUT_CPUS:-2}"
-    cpuset: "${SUT_CPUSET:-0-1}"
+    cpuset: "${SUT_CPUSET:-2-3}"
     mem_limit: "${MEM_LIMIT:-4g}"
     volumes:
       - ./:/var/www/html
@@ -148,7 +148,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
-    cpuset: "${SUT_CPUSET:-0-1}"
+    cpuset: "${SUT_CPUSET:-2-3}"
     mem_limit: 128m
     depends_on:
       fpm:
@@ -166,13 +166,12 @@ services:
       start_period: 15s
 
   # --- DB backend for the /bench/db workload ----------------------------------
-  # Shares cores 0-3 with the app server during the db workload (realistic single
-  # box). Idle for all other workloads.
+  # Pinned to its OWN dedicated core (1, via MYSQL_CPUSET), off the SUT's cores, so
+  # /bench/db measures the SUT without mysql stealing its CPU. Idle for other workloads.
   mysql:
     image: mysql:8.0
     restart: unless-stopped
-    cpuset: "${SUT_CPUSET:-0-1}"
-    cpus: "1"          # fixed 1-cpu cap so mysql can't hog the SUT's cores during /bench/db
+    cpuset: "${MYSQL_CPUSET:-1}"     # its own dedicated core (1), off the SUT's cores
     mem_limit: 512m
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -188,7 +187,7 @@ services:
       retries: 20
       start_period: 20s
 
-  # --- Load generator (pinned to the host's UPPER half of cores) --------------
+  # --- Load generator (pinned to its own dedicated core 0) --------------------
   # Profiled so it never starts on `docker compose up`. The harness invokes it
   # with `docker compose run --rm wrk ...`. The Lua reporter emits one JSON line
   # prefixed with __WRKJSON__ so the harness can parse percentiles + errors.
@@ -196,10 +195,9 @@ services:
     build:
       context: ./docker/wrk
     image: octane-bench/wrk:latest
-    # Set by benchmark.sh = the host's upper half: 2-3 on the 4-core CI runner
-    # (SUT has 0-1), 4-7 on an 8-core host. Default 2-3 so a bare run is valid.
-    cpuset: "${WRK_CPUSET:-2-3}"
-    cpus: "1"          # fixed 1-cpu cap — the generator's footprint stays deterministic
+    # The load generator gets its own dedicated core 0 (benchmark.sh sets WRK_CPUSET=0),
+    # off the SUT's cores. Default 0 so a bare `docker compose run wrk` is valid.
+    cpuset: "${WRK_CPUSET:-0}"
     mem_limit: 256m
     profiles: ["tools"]
     # Joins the default project network; targets app servers by service name
