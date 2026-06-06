@@ -98,6 +98,49 @@ SERVER_LABELS = {
 }
 
 
+def metric_winners(cells, servers, metric, lower_is_better):
+    """Return the server(s) that win the most metric comparison cells."""
+    server_rank = {server: index for index, server in enumerate(servers)}
+    comparisons = defaultdict(list)
+    for cell in cells:
+        value = cell.get(metric)
+        if value is None:
+            continue
+        key = (cell["workload"], cell.get("workers", 0), cell["concurrency"])
+        ranked_value = value if lower_is_better else -value
+        comparisons[key].append(
+            (ranked_value, server_rank.get(cell["server"], len(servers)), cell["server"])
+        )
+
+    wins = defaultdict(int)
+    for candidates in comparisons.values():
+        _, _, winner = min(candidates)
+        wins[winner] += 1
+
+    if not wins:
+        return {"servers": [], "wins": 0, "comparisons": len(comparisons)}
+
+    top_wins = max(wins.values())
+    winners = [server for server in servers if wins.get(server) == top_wins]
+    return {"servers": winners, "wins": top_wins, "comparisons": len(comparisons)}
+
+
+def winner_meta_description(winners):
+    def names(metric):
+        labels = [SERVER_LABELS.get(server, server) for server in winners[metric]["servers"]]
+        if len(labels) < 2:
+            return labels[0] if labels else "No server"
+        return ", ".join(labels[:-1]) + " and " + labels[-1]
+
+    return (
+        "Laravel Octane benchmark: "
+        f"p50 winner: {names('p50')}; "
+        f"p99 winner: {names('p99')}; "
+        f"requests/sec winner: {names('rps')}. "
+        "Compare throughput, workers, and peak RSS."
+    )
+
+
 def logo_data_uri():
     """Embed readmes/laravel-bm.png as a base64 data URI so every generated page is
     self-contained (gh-pages publishes only docs/, not readmes/). '' if absent."""
@@ -161,6 +204,11 @@ def main():
             {"server": s, "workload": w, "workers": wk, "peak_rss_mib": d["peak_rss_mib"]}
             for (s, w, wk), d in sorted(rss.items())
         ],
+    }
+    summary["winners"] = {
+        "p50": metric_winners(summary["cells"], servers, "p50_median", True),
+        "p99": metric_winners(summary["cells"], servers, "p99_median", True),
+        "rps": metric_winners(summary["cells"], servers, "rps_median", False),
     }
 
     # CI provenance: link back to the workflow run that produced this report so the
@@ -254,6 +302,7 @@ def main():
     here = os.path.dirname(__file__)
     data_js = json.dumps(summary)
     logo = logo_data_uri()
+    meta_description = html.escape(winner_meta_description(summary["winners"]), quote=True)
     copy_social_image()
 
     # Serve docs/ as pre-built static files: .nojekyll stops GitHub Pages from
@@ -263,7 +312,9 @@ def main():
     # Comparison dashboard -> docs/index.html
     with open(os.path.join(here, "dashboard_template.html")) as fh:
         index_tpl = fh.read()
-    index_html = index_tpl.replace("/*__DATA__*/", data_js).replace("/*__LOGO__*/", logo)
+    index_html = (index_tpl.replace("/*__DATA__*/", data_js)
+                           .replace("/*__LOGO__*/", logo)
+                           .replace("/*__META_DESCRIPTION__*/", meta_description))
     with open(os.path.join(DOCS, "index.html"), "w") as fh:
         fh.write(index_html)
 
@@ -275,6 +326,7 @@ def main():
         server_label = SERVER_LABELS.get(s, s)
         page = (server_tpl.replace("/*__DATA__*/", data_js)
                           .replace("/*__LOGO__*/", logo)
+                          .replace("/*__META_DESCRIPTION__*/", meta_description)
                           .replace("/*__SERVER__*/", json.dumps(s))
                           .replace("/*__SERVER_LABEL__*/", html.escape(server_label))
                           .replace("/*__SERVER_PATH__*/", "/" + html.escape(s)))

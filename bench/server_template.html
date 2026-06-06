@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>/*__SERVER_LABEL__*/ Laravel Octane Benchmark Report</title>
-<meta name="description" content="Deep-dive Laravel Octane benchmark report for /*__SERVER_LABEL__*/ with p99 latency, throughput, worker-count behavior, and peak RSS compared against Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM." />
+<meta name="description" content="/*__META_DESCRIPTION__*/" />
 <meta name="robots" content="index,follow" />
 <link rel="canonical" href="https://terrylinooo.github.io/laravel-octane-benchmark/*__SERVER_PATH__*/.html" />
 <meta property="og:type" content="article" />
@@ -264,7 +264,6 @@
   .srv-chip .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(12,15,22,.55); }
   .hero-verdict {
     margin: 16px 0 0; font-size: 15px; line-height: 1.55; color: var(--text-2);
-    max-width: 70ch;
   }
   .hero-verdict b { color: var(--text); font-weight: 650; }
   .hero-verdict .good { color: var(--srv-color, var(--accent)); font-weight: 700; }
@@ -401,6 +400,8 @@
   .rank-note { margin-top: 14px; font-size: 12px; color: var(--text-3); }
   .rank-note .legkey { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
   .rank-note .kpill { width: 18px; height: 14px; border-radius: 5px; display: inline-block; }
+  .rank-cards { display: grid; gap: 18px; }
+  .rank-card-title { font-size: 14px; font-weight: 640; margin-bottom: 14px; }
 
   .mem-wrap { position: relative; height: 280px; }
   .footer-note {
@@ -522,11 +523,19 @@
   <section id="ranks">
     <div class="sec-head">
       <h2>Rank table <span class="badge-group" id="rankBadge"></span></h2>
-      <p>This server's rank by p99 latency at each workload &amp; concurrency (1 = fastest). Rank&nbsp;1 cells are filled in the server color &mdash; see where it leads and where it trails.</p>
+      <p id="rankDescription">This server's p99 latency and requests/sec ranks at each workload &amp; concurrency. Rank&nbsp;1 cells are filled in the server color.</p>
     </div>
-    <div class="card">
-      <div class="table-scroll"><table class="ranktable" id="rankTable"></table></div>
-      <div class="rank-note" id="rankNote"></div>
+    <div class="rank-cards">
+      <div class="card">
+        <div class="rank-card-title" id="latencyRankTitle">p99 latency rank</div>
+        <div class="table-scroll"><table class="ranktable" id="rankTable"></table></div>
+        <div class="rank-note" id="rankNote"></div>
+      </div>
+      <div class="card">
+        <div class="rank-card-title">Requests/sec throughput rank</div>
+        <div class="table-scroll"><table class="ranktable" id="throughputRankTable"></table></div>
+        <div class="rank-note" id="throughputRankNote"></div>
+      </div>
     </div>
   </section>
 
@@ -547,7 +556,7 @@
 </div>
 
 <footer class="site-footer">
-  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L.</a>, developer of Airygen, a <a href="https://www.airygen.com/en" target="_blank" rel="noopener">WordPress SEO Plugin</a>
+  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L.</a>, developer of <a href="https://www.airygen.com/en" target="_blank" rel="noopener">Airygen</a>
 </footer>
 
 <script>
@@ -643,16 +652,31 @@ function crossoverCaption(w, metric, lower) {
 }
 
 /* ===== RANK / WIN ANALYSIS for THIS server ===== */
-/* rank of THIS server at (w,c) by p99 (1 = best). null if no cell for this server. */
+/* Rank of THIS server at (w,c) by the selected latency metric (1 = best). */
 function rankAt(w, c) {
+  const metric = SELECTED_METRIC.key;
   const mine = cell(SERVER, w, c);
-  if (!mine || mine.p99_median == null) return null;
+  if (!mine || mine[metric] == null) return null;
   let rank = 1, n = 0;
   DATA.servers.forEach(s => {
     const cc = cell(s, w, c);
-    if (!cc || cc.p99_median == null) return;
+    if (!cc || cc[metric] == null) return;
     n++;
-    if (s !== SERVER && cc.p99_median < mine.p99_median) rank++;
+    if (s !== SERVER && cc[metric] < mine[metric]) rank++;
+  });
+  return { rank, of: n };
+}
+
+/* Rank of THIS server by throughput at (w,c), where higher requests/sec is better. */
+function throughputRankAt(w, c) {
+  const mine = cell(SERVER, w, c);
+  if (!mine || mine.rps_median == null) return null;
+  let rank = 1, n = 0;
+  DATA.servers.forEach(s => {
+    const cc = cell(s, w, c);
+    if (!cc || cc.rps_median == null) return;
+    n++;
+    if (s !== SERVER && cc.rps_median > mine.rps_median) rank++;
   });
   return { rank, of: n };
 }
@@ -960,7 +984,12 @@ function restyleCharts() {
 /* ===== RANK TABLE ===== */
 function renderRankTable() {
   const t = document.getElementById('rankTable');
+  const metricLabel = SELECTED_METRIC.label;
   document.getElementById('rankBadge').textContent = srvLabel(SERVER);
+  document.getElementById('latencyRankTitle').textContent = `${metricLabel} latency rank`;
+  document.getElementById('rankDescription').innerHTML =
+    `This server's ${metricLabel} latency and requests/sec ranks at each workload &amp; concurrency. ` +
+    `Rank&nbsp;1 cells are filled in the server color.`;
   let head = '<thead><tr><th class="rowhdr">Workload</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
@@ -982,7 +1011,29 @@ function renderRankTable() {
   body += '</tbody>';
   t.innerHTML = head + body;
   document.getElementById('rankNote').innerHTML =
-    `<span class="legkey"><span class="kpill" style="background:${SRV_C}"></span>rank 1 (fastest p99)</span>` +
+    `<span class="legkey"><span class="kpill" style="background:${SRV_C}"></span>rank 1 (fastest ${metricLabel})</span>` +
+    `<span class="legkey"><span class="kpill" style="background:var(--pill-bg)"></span>rank 2+</span>`;
+
+  const throughputTable = document.getElementById('throughputRankTable');
+  let throughputBody = '<tbody>';
+  DATA.workloads.forEach(w => {
+    throughputBody += `<tr><td class="rowhdr">${w}</td>`;
+    DATA.concurrencies.forEach(c => {
+      const r = throughputRankAt(w, c);
+      if (!r) {
+        throughputBody += `<td><span class="rpill">&mdash;</span></td>`;
+      } else if (r.rank === 1) {
+        throughputBody += `<td><span class="rpill best" style="background:${SRV_C}">1<small>of ${r.of}</small></span></td>`;
+      } else {
+        throughputBody += `<td><span class="rpill">${r.rank}<small>of ${r.of}</small></span></td>`;
+      }
+    });
+    throughputBody += '</tr>';
+  });
+  throughputBody += '</tbody>';
+  throughputTable.innerHTML = head + throughputBody;
+  document.getElementById('throughputRankNote').innerHTML =
+    `<span class="legkey"><span class="kpill" style="background:${SRV_C}"></span>rank 1 (highest requests/sec)</span>` +
     `<span class="legkey"><span class="kpill" style="background:var(--pill-bg)"></span>rank 2+</span>`;
 }
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Laravel Octane Benchmark: Swoole vs OpenSwoole vs RoadRunner vs FrankenPHP</title>
-<meta name="description" content="Interactive Laravel Octane benchmark report comparing Swoole, OpenSwoole, RoadRunner, FrankenPHP, and PHP-FPM across p99 latency, throughput, worker counts, and memory usage." />
+<meta name="description" content="/*__META_DESCRIPTION__*/" />
 <meta name="robots" content="index,follow" />
 <link rel="canonical" href="https://terrylinooo.github.io/laravel-octane-benchmark/" />
 <meta property="og:type" content="website" />
@@ -239,6 +239,8 @@
   .report-hint { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
   .report-hint code { background: var(--pill-bg); padding: 1px 6px; border-radius: 4px;
     font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #reportLocal a { color: var(--accent); text-decoration: none; }
+  #reportLocal a:hover { text-decoration: underline; }
   .sec-head { margin-bottom: 18px; }
   .sec-head h2 {
     font-size: 19px; font-weight: 680; margin: 0 0 3px;
@@ -259,35 +261,43 @@
   }
   .card-sub { font-size: 12.5px; color: var(--text-3); margin: 0 0 16px; }
 
-  /* Hero */
-  .hero-grid {
-    display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-    gap: 20px; align-items: stretch;
+  /* Summary */
+  .winner-cards { display: grid; gap: 20px; }
+  .winner-cards > * { width: 100%; min-width: 0; }
+  .heatmap {
+    width: 100%; min-width: 760px; table-layout: fixed;
+    border-collapse: separate; border-spacing: 0;
   }
-  /* let grid items shrink so an inner .table-scroll scrolls instead of inflating the track */
-  .hero-grid > * { min-width: 0; }
-  .heatmap { width: 100%; min-width: 440px; border-collapse: separate; border-spacing: 0; }
+  .heatmap .workload-col { width: 160px; }
+  .heatmap col:not(.workload-col) { width: 120px; }
   .heatmap th {
     font-size: 11px; font-weight: 600; color: var(--text-3);
     text-transform: uppercase; letter-spacing: .04em; padding: 0 6px 10px;
     text-align: center;
   }
   .heatmap th.rowhdr { text-align: left; padding-left: 2px; }
-  .heatmap td { padding: 5px 6px; text-align: center; }
+  .heatmap td { padding: 5px 8px; text-align: center; }
   .heatmap td.rowhdr {
     text-align: left; font-weight: 600; font-size: 13px; color: var(--text);
     padding-left: 2px; white-space: nowrap;
   }
   .heatmap td.rowhdr small { display: block; color: var(--text-3); font-weight: 500; font-size: 11px; }
   .hpill {
-    display: inline-flex; flex-direction: column; align-items: center;
-    justify-content: center; width: 100%; padding: 8px 4px; border-radius: 9px;
-    font-weight: 650; font-size: 12.5px; color: #0c0f16; line-height: 1.25;
-    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; min-height: 42px; padding: 7px 10px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border-strong);
+    color: #0c0f16; line-height: 1.25;
   }
-  .hpill small { font-weight: 600; font-size: 10.5px; opacity: .78; }
+  .hpill .winner-server { font-size: 12px; font-weight: 400; color: var(--text); white-space: nowrap; }
+  .hpill .winner-value {
+    font-size: 10.5px; font-weight: 600; white-space: nowrap; opacity: .78;
+  }
+  .hpill .winner-value .stats { font-size: 12px; font-weight: 700; }
 
-  .kpis { display: flex; flex-direction: column; gap: 14px; }
+  .kpis {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px; margin-top: 20px;
+  }
   .kpi {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow);
@@ -390,6 +400,7 @@
   .legend {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   }
+  #summary > .legend { margin-bottom: 18px; }
   .legend-item {
     display: inline-flex; align-items: center; gap: 8px;
     border: 1px solid var(--border); background: var(--card);
@@ -409,15 +420,8 @@
     border-top: 1px dashed var(--border); padding-top: 14px;
   }
 
-  @media (max-width: 1440px) {
-    .hero-grid { grid-template-columns: 1fr; }
-    .kpis { flex-direction: row; flex-wrap: nowrap; gap: 14px; }
-    .kpi { min-width: 0; flex: 1 1 0; }
-  }
   @media (max-width: 980px) {
     .chart-pair { grid-template-columns: 1fr; }
-    .kpis { flex-wrap: wrap; }
-    .kpi { min-width: 160px; }
   }
   /* Hide the scrollspy sidebar; main goes full width below 860px */
   @media (max-width: 860px) {
@@ -443,8 +447,10 @@
   @media (max-width: 640px) {
     main { padding: 18px 12px 56px; }
     .card { padding: 16px 14px; }
-    .hero-grid { gap: 14px; }
-    .kpis { flex-direction: column; flex-wrap: nowrap; gap: 12px; }
+    .heatmap td { padding-left: 7px; padding-right: 7px; }
+    .hpill { padding-left: 9px; padding-right: 9px; }
+    .winner-cards { gap: 14px; }
+    .kpis { grid-template-columns: 1fr; gap: 12px; }
     .kpi { min-width: 0; width: 100%; }
     .chart-pair { gap: 16px; }
     .view-options { flex-wrap: nowrap; justify-content: center; gap: 10px; width: 100%; margin-left: 0; }
@@ -513,9 +519,10 @@
     <section id="summary">
       <div class="sec-head">
         <h2>Summary</h2>
-        <p>Lowest-latency winner per workload &amp; concurrency, with headline stats. All comparisons are relative on identical hardware.</p>
+        <p>Latency and requests/sec winners per workload &amp; concurrency, with headline stats. All comparisons are relative on identical hardware.</p>
       </div>
-      <div class="hero-grid">
+      <div class="legend" id="legend"></div>
+      <div class="winner-cards">
         <div class="card">
           <div class="wl-head">
             <div class="wl-title">
@@ -525,11 +532,13 @@
           <div class="card-sub">Each cell shows the server with the lowest median latency at that concurrency.</div>
           <div class="table-scroll"><table class="heatmap" id="heatmap"></table></div>
         </div>
-        <div class="kpis" id="kpis"></div>
+        <div class="card">
+          <div class="card-title">Requests/sec winner &mdash; highest throughput</div>
+          <div class="card-sub">Each cell shows the server with the highest median requests per second at that concurrency.</div>
+          <div class="table-scroll"><table class="heatmap" id="requestHeatmap"></table></div>
+        </div>
       </div>
-      <div style="margin-top:20px;">
-        <div class="legend" id="legend"></div>
-      </div>
+      <div class="kpis" id="kpis"></div>
     </section>
 
     <section id="report">
@@ -583,7 +592,7 @@
 </div>
 
 <footer class="site-footer">
-  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L.</a>, developer of Airygen, a <a href="https://www.airygen.com/en" target="_blank" rel="noopener">WordPress SEO Plugin</a>
+  Maintained by <a href="https://terryl.in" target="_blank" rel="noopener">Terry L.</a>, developer of <a href="https://www.airygen.com/en" target="_blank" rel="noopener">Airygen</a>
 </footer>
 
 <script>
@@ -725,7 +734,9 @@ function renderHeatmap(metric = SELECTED_METRIC) {
   const t = document.getElementById('heatmap');
   const title = document.getElementById('heatmapTitle');
   if (title) title.innerHTML = `Winner heatmap &mdash; lowest ${metric.label} latency`;
-  let head = '<thead><tr><th class="rowhdr">Workload</th>';
+  let head = '<colgroup><col class="workload-col">';
+  DATA.concurrencies.forEach(() => head += '<col>');
+  head += '</colgroup><thead><tr><th class="rowhdr">Workload</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
   head += '</tr></thead>';
   let body = '<tbody>';
@@ -739,9 +750,42 @@ function renderHeatmap(metric = SELECTED_METRIC) {
         if (cc && cc[metric.key] != null && cc[metric.key] < bestv) { bestv = cc[metric.key]; best = s; }
       });
       if (best == null) {
-        body += `<td><span class="hpill" style="background:var(--pill-bg);color:var(--text-3)">&mdash;</span></td>`;
+        body += '<td><span class="hpill">&mdash;</span></td>';
       } else {
-        body += `<td><span class="hpill" style="background:${COLORS[best]}">${srvLabel(best)}<small>${bestv} ms</small></span></td>`;
+        body += `<td><span class="hpill" style="border-color:${COLORS[best]}"><span class="winner-server">${srvLabel(best)}</span><span class="winner-value"><span class="stats">${bestv}</span> ms</span></span></td>`;
+      }
+    });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  t.innerHTML = head + body;
+}
+
+function renderRequestHeatmap() {
+  const t = document.getElementById('requestHeatmap');
+  if (!t) return;
+  let head = '<colgroup><col class="workload-col">';
+  DATA.concurrencies.forEach(() => head += '<col>');
+  head += '</colgroup><thead><tr><th class="rowhdr">Workload</th>';
+  DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
+  head += '</tr></thead>';
+  let body = '<tbody>';
+  DATA.workloads.forEach(w => {
+    const desc = (WL_DESC[w] || '').split('—')[0].split('(')[0].trim();
+    body += `<tr><td class="rowhdr">${w}<small>${desc}</small></td>`;
+    DATA.concurrencies.forEach(c => {
+      let best = null, bestv = -Infinity;
+      DATA.servers.forEach(s => {
+        const cc = cell(s, w, c);
+        if (cc && cc.rps_median != null && cc.rps_median > bestv) {
+          bestv = cc.rps_median;
+          best = s;
+        }
+      });
+      if (best == null) {
+        body += '<td><span class="hpill">&mdash;</span></td>';
+      } else {
+        body += `<td><span class="hpill" style="border-color:${COLORS[best]}"><span class="winner-server">${srvLabel(best)}</span><span class="winner-value"><span class="stats">${Math.round(bestv).toLocaleString()}</span> req/s</span></span></td>`;
       }
     });
     body += '</tr>';
@@ -777,8 +821,8 @@ function renderKpis() {
   const srv = (s) => s ? `<span class="srv"><span class="swatch" style="background:${COLORS[s]}"></span>${srvLabel(s)}</span>` : '';
   const cards = [
     { label: `Lowest ${SELECTED_METRIC.label} overall`, val: lp.s ? lp.v : '—', unit: lp.s ? 'ms' : '', s: lp.s, ctx: lp.s ? `${lp.w} · c${lp.c}` : '' },
-    { label: 'Best throughput', val: bt.s ? Math.round(bt.v).toLocaleString() : '—', unit: bt.s ? 'req/s' : '', s: bt.s, ctx: bt.s ? `${bt.w} · c${bt.c}` : '' },
-    { label: 'Lowest peak memory', val: lm.s ? lm.v : '—', unit: lm.s ? 'MiB' : '', s: lm.s, ctx: lm.s ? 'max RSS across runs' : '' }
+    { label: 'Lowest peak memory', val: lm.s ? lm.v : '—', unit: lm.s ? 'MiB' : '', s: lm.s, ctx: lm.s ? 'max RSS across runs' : '' },
+    { label: 'Best throughput', val: bt.s ? Math.round(bt.v).toLocaleString() : '—', unit: bt.s ? 'req/s' : '', s: bt.s, ctx: bt.s ? `${bt.w} · c${bt.c}` : '' }
   ];
   document.getElementById('kpis').innerHTML = cards.map(c => `
     <div class="kpi">
@@ -1046,6 +1090,7 @@ function rebuildAll() {
   charts.length = 0;
   document.getElementById('groupSections').innerHTML = '';
   renderHeatmap();
+  renderRequestHeatmap();
   renderKpis();
   renderGroups();
   applyVisibility();
@@ -1093,6 +1138,7 @@ renderReport();
 renderWorkerToggle();
 initReportType();
 renderHeatmap();
+renderRequestHeatmap();
 renderKpis();
 renderLegend();
 renderGroups();

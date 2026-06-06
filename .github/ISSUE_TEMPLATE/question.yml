@@ -1,0 +1,63 @@
+name: Benchmark question
+description: Ask a question about benchmark results or methodology.
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking a question, research the meaning of latency percentiles.
+
+        - **p50**: 50% of requests completed at or below this latency.
+        - **p90**: 90% of requests completed at or below this latency.
+        - **p99**: 99% of requests completed at or below this latency.
+
+        If you do not understand these metrics yet, please research them before opening an issue.
+
+  - type: checkboxes
+    id: percentile_research
+    attributes:
+      label: Required research
+      description: Confirm that you understand the metrics before submitting.
+      options:
+        - label: I researched and understand the meaning of p50, p90, and p99 latency.
+          required: true
+
+  - type: input
+    id: report_url
+    attributes:
+      label: Report URL
+      description: Link to the benchmark report or GitHub Actions run you are asking about.
+      placeholder: https://...
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed_data
+    attributes:
+      label: Relevant data
+      description: Include the server, workload, worker count, concurrency, metric, and value.
+      placeholder: |
+        Server:
+        Workload:
+        Workers:
+        Concurrency:
+        Metric and value:
+    validations:
+      required: true
+
+  - type: textarea
+    id: research
+    attributes:
+      label: Research completed
+      description: Summarize what you reviewed before opening this issue.
+      placeholder: Documentation, articles, related issues, or calculations reviewed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Ask one specific, answerable question about the benchmark.
+    validations:
+      required: true
