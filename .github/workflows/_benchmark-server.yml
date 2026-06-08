@@ -15,6 +15,10 @@ on:
         description: "Concurrency levels (space-separated)"
         default: "8 16 32 64 128"
         type: string
+      worker_counts:
+        description: "Worker counts (space-separated)"
+        default: "2 4 8"
+        type: string
       runs:
         description: "Runs per cell"
         default: "2"
@@ -88,6 +92,7 @@ jobs:
           SERVERS: ${{ inputs.server }}
           WORKLOADS: ${{ inputs.workloads }}
           CONCURRENCIES: ${{ inputs.concurrencies }}
+          WORKER_COUNTS: ${{ inputs.worker_counts }}
           RUNS: ${{ inputs.runs }}
           DURATION: ${{ inputs.duration }}
           WARMUP: ${{ inputs.warmup }}

@@ -149,7 +149,12 @@ BENCH_MANDELBROT_REPEAT
 BENCH_JSON_ITERATIONS
 ```
 
-By default, `benchmark.sh` tests roughly `2 * SUT_CPUS` workers and then double that count. On the default 4-vCPU runner the server under test gets 2 CPUs, so the default worker sweep is `4 8`. If 8 workers shows lower throughput or worse p99 than 4, that is a valid result: it usually means the extra PHP workers are adding scheduler contention, cache pressure, or DB/socket contention without adding useful CPU capacity.
+By default, `benchmark.sh` includes a 2-worker low-contention baseline, then tests
+roughly `2 * SUT_CPUS` workers and double that count. On the default 4-vCPU runner
+the server under test gets 2 CPUs, so the default worker sweep is `2 4 8`. If a
+higher worker count shows lower throughput or worse p99, that is a valid result:
+the extra PHP workers may be adding scheduler contention, cache pressure, or
+DB/socket contention without adding useful CPU capacity.
 
 Each server/workload pair is warmed at every concurrency before the measured runs. The default wrk timeout is 15 seconds, which lets slow saturated cells be recorded instead of disappearing as censored failures.
 

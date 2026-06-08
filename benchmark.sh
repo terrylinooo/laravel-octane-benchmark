@@ -54,11 +54,17 @@ SUT_CPUSET="${SUT_CPUSET:-2-$((NPROC - 1))}"
 export SUT_CPUS SUT_CPUSET WRK_CPUSET MYSQL_CPUSET
 # Generator + DB are isolated from the SUT by construction (cores 0,1 vs 2..N-1).
 GEN_ISOLATED=true
-# Worker-count sweep (a matrix dimension). Default = Octane's ~2 workers/CPU and its
-# x2: 4 and 8 on the 2-cpu runner (8 and 16 on an 8-core host). OCTANE_WORKERS is set
-# per pass inside the loop; compose reads it and the FPM pool.conf is matched.
+# Worker-count sweep (a matrix dimension). Include 2 workers as a low-contention
+# baseline, then Octane's ~2 workers/CPU and its x2. On the 2-cpu runner this is
+# 2, 4, and 8 workers. OCTANE_WORKERS is set per pass inside the loop; compose
+# reads it and the FPM pool.conf is matched.
 BASE_WORKERS="$(( SUT_CPUS * 2 ))"
-WORKER_COUNTS="${WORKER_COUNTS:-${OCTANE_WORKERS:-$BASE_WORKERS $(( BASE_WORKERS * 2 ))}}"
+if [ "$BASE_WORKERS" -eq 2 ]; then
+  DEFAULT_WORKER_COUNTS="2 4"
+else
+  DEFAULT_WORKER_COUNTS="2 $BASE_WORKERS $(( BASE_WORKERS * 2 ))"
+fi
+WORKER_COUNTS="${WORKER_COUNTS:-${OCTANE_WORKERS:-$DEFAULT_WORKER_COUNTS}}"
 
 dc() { docker compose "$@"; }
 
