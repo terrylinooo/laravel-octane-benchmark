@@ -141,6 +141,45 @@ def winner_meta_description(winners):
     )
 
 
+def metric_win_counts(cells, servers, metric, lower_is_better):
+    """Return per-server winner counts using the same tie-break as metric_winners."""
+    server_rank = {server: index for index, server in enumerate(servers)}
+    comparisons = defaultdict(list)
+    for cell in cells:
+        value = cell.get(metric)
+        if value is None:
+            continue
+        key = (cell["workload"], cell.get("workers", 0), cell["concurrency"])
+        ranked_value = value if lower_is_better else -value
+        comparisons[key].append(
+            (ranked_value, server_rank.get(cell["server"], len(servers)), cell["server"])
+        )
+
+    wins = defaultdict(int)
+    for candidates in comparisons.values():
+        _, _, winner = min(candidates)
+        wins[winner] += 1
+    return wins, len(comparisons)
+
+
+def server_meta_description(server, server_label, summary):
+    p99_wins, p99_total = metric_win_counts(summary["cells"], summary["servers"], "p99_median", True)
+    rps_wins, rps_total = metric_win_counts(summary["cells"], summary["servers"], "rps_median", False)
+    peak_values = [
+        row["peak_rss_mib"]
+        for row in summary.get("rss", [])
+        if row.get("server") == server and row.get("peak_rss_mib") is not None
+    ]
+    peak = max(peak_values) if peak_values else None
+    memory = f"peak RSS up to {peak} MiB" if peak is not None else "peak RSS comparison"
+
+    return (
+        f"{server_label} Laravel Octane benchmark performance test: "
+        f"{p99_wins.get(server, 0)}/{p99_total} p99 latency wins, "
+        f"{rps_wins.get(server, 0)}/{rps_total} requests/sec wins, and {memory}."
+    )
+
+
 def logo_data_uri():
     """Embed readmes/laravel-bm.png as a base64 data URI so every generated page is
     self-contained (gh-pages publishes only docs/, not readmes/). '' if absent."""
@@ -324,9 +363,10 @@ def main():
         server_tpl = fh.read()
     for s in featured:
         server_label = SERVER_LABELS.get(s, s)
+        server_meta = html.escape(server_meta_description(s, server_label, summary), quote=True)
         page = (server_tpl.replace("/*__DATA__*/", data_js)
                           .replace("/*__LOGO__*/", logo)
-                          .replace("/*__META_DESCRIPTION__*/", meta_description)
+                          .replace("/*__SERVER_META_DESCRIPTION__*/", server_meta)
                           .replace("/*__SERVER__*/", json.dumps(s))
                           .replace("/*__SERVER_LABEL__*/", html.escape(server_label))
                           .replace("/*__SERVER_PATH__*/", "/" + html.escape(s)))
