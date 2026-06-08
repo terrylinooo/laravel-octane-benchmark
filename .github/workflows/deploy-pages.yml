@@ -1,0 +1,49 @@
+name: Deploy Benchmark Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark_run_id:
+        description: "Benchmark workflow run id to deploy, for example 27112848600"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download benchmark artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: benchmark-${{ inputs.benchmark_run_id }}
+          run-id: ${{ inputs.benchmark_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: benchmark-artifact
+
+      - name: Verify dashboard files
+        run: |
+          test -f benchmark-artifact/docs/index.html
+          test -f benchmark-artifact/docs/summary.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: benchmark-artifact/docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
