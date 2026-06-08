@@ -11,6 +11,15 @@ name: Benchmark
 # Manual only by default — the full matrix is hours; use the inputs to scale.
 
 on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - composer.lock
+  push:
+    branches:
+      - main
+    paths:
+      - composer.lock
   workflow_dispatch:
     inputs:
       servers:
@@ -43,8 +52,112 @@ env:
   GITHUB_USERNAME: ${{ github.actor }}
 
 jobs:
+  detect-laravel-update:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request_target' || github.event_name == 'push' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      laravel_changed: ${{ steps.detect.outputs.laravel_changed }}
+      safe_dependabot_pr: ${{ steps.detect.outputs.safe_dependabot_pr }}
+      base_version: ${{ steps.detect.outputs.base_version }}
+      head_version: ${{ steps.detect.outputs.head_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect laravel/framework version change
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_USER: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            gh api "repos/$REPOSITORY/contents/composer.lock?ref=$BASE_SHA" --jq .content | base64 -d > /tmp/base-composer.lock
+            gh api "repos/$HEAD_REPOSITORY/contents/composer.lock?ref=$HEAD_SHA" --jq .content | base64 -d > /tmp/head-composer.lock
+            gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' > /tmp/changed-files
+          else
+            git fetch origin "$BEFORE_SHA" --depth=1 || true
+            git show "$BEFORE_SHA:composer.lock" > /tmp/base-composer.lock
+            cp composer.lock /tmp/head-composer.lock
+            : > /tmp/changed-files
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+
+          def framework_version(lock_text):
+              data = json.loads(lock_text)
+              for section in ("packages", "packages-dev"):
+                  for package in data.get(section, []):
+                      if package.get("name") == "laravel/framework":
+                          return package.get("version", "")
+              return ""
+
+          with open("/tmp/base-composer.lock", encoding="utf-8") as fh:
+              base_lock = fh.read()
+          with open("/tmp/head-composer.lock", encoding="utf-8") as fh:
+              head_lock = fh.read()
+
+          base_version = framework_version(base_lock)
+          head_version = framework_version(head_lock)
+          changed = bool(base_version and head_version and base_version != head_version)
+          changed_files = {
+              line.strip()
+              for line in open("/tmp/changed-files", encoding="utf-8")
+              if line.strip()
+          }
+          allowed_files = {"composer.json", "composer.lock"}
+          safe_dependabot_pr = (
+              os.environ["EVENT_NAME"] == "pull_request_target"
+              and os.environ["PR_USER"] == "dependabot[bot]"
+              and os.environ["HEAD_REPOSITORY"] == os.environ["REPOSITORY"]
+              and os.environ["HEAD_REF"].startswith("dependabot/composer/")
+              and bool(changed_files)
+              and changed_files <= allowed_files
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"base_version={base_version}\n")
+              out.write(f"head_version={head_version}\n")
+              out.write(f"laravel_changed={'true' if changed else 'false'}\n")
+              out.write(f"safe_dependabot_pr={'true' if safe_dependabot_pr else 'false'}\n")
+
+          print(f"laravel/framework: {base_version or '(missing)'} -> {head_version or '(missing)'}")
+          print(f"changed={changed}")
+          print(f"changed_files={sorted(changed_files)}")
+          print(f"safe_dependabot_pr={safe_dependabot_pr}")
+          PY
+
+  auto-merge-dependabot:
+    runs-on: ubuntu-latest
+    needs: [detect-laravel-update]
+    if: ${{ github.event_name == 'pull_request_target' && needs.detect-laravel-update.outputs.safe_dependabot_pr == 'true' && needs.detect-laravel-update.outputs.laravel_changed == 'true' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable auto-merge for Dependabot Laravel update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge "$PR_URL" --auto --squash --delete-branch
+
   benchmark:
     runs-on: ubuntu-24.04
+    needs: [detect-laravel-update]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.detect-laravel-update.outputs.laravel_changed == 'true')) }}
     timeout-minutes: 350
     permissions:
       contents: read
@@ -99,12 +212,12 @@ jobs:
 
       - name: Run benchmark
         env:
-          SERVERS: ${{ inputs.servers }}
-          WORKLOADS: ${{ inputs.workloads }}
-          CONCURRENCIES: ${{ inputs.concurrencies }}
-          RUNS: ${{ inputs.runs }}
-          DURATION: ${{ inputs.duration }}
-          WARMUP: ${{ inputs.warmup }}
+          SERVERS: ${{ inputs.servers || 'swoole openswoole roadrunner frankenphp fpm' }}
+          WORKLOADS: ${{ inputs.workloads || 'hello hash mandelbrot json db' }}
+          CONCURRENCIES: ${{ inputs.concurrencies || '8 16 32 64 128' }}
+          RUNS: ${{ inputs.runs || '2' }}
+          DURATION: ${{ inputs.duration || '20' }}
+          WARMUP: ${{ inputs.warmup || '10' }}
         run: make bench
 
       - name: Aggregate results
@@ -124,7 +237,7 @@ jobs:
       # Actions). No Jekyll, no branch — docs/ is served as static files exactly
       # as generated. The deploy itself happens in the `deploy` job below.
       - name: Upload Pages artifact
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs
@@ -133,7 +246,7 @@ jobs:
   # and the github-pages environment. Only runs when publish=true.
   deploy:
     needs: benchmark
-    if: ${{ inputs.publish }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
