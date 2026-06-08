@@ -1,0 +1,119 @@
+name: Laravel Update
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - composer.lock
+  push:
+    branches:
+      - main
+    paths:
+      - composer.lock
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      laravel_changed: ${{ steps.detect.outputs.laravel_changed }}
+      safe_dependabot_pr: ${{ steps.detect.outputs.safe_dependabot_pr }}
+    steps:
+      - name: Checkout
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect laravel/framework version change
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_USER: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            gh api "repos/$REPOSITORY/contents/composer.lock?ref=$BASE_SHA" --jq .content | base64 -d > /tmp/base-composer.lock
+            gh api "repos/$HEAD_REPOSITORY/contents/composer.lock?ref=$HEAD_SHA" --jq .content | base64 -d > /tmp/head-composer.lock
+            gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' > /tmp/changed-files
+          else
+            git show "$BEFORE_SHA:composer.lock" > /tmp/base-composer.lock
+            cp composer.lock /tmp/head-composer.lock
+            : > /tmp/changed-files
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+
+          def framework_version(path):
+              with open(path, encoding="utf-8") as fh:
+                  lock = json.load(fh)
+              for section in ("packages", "packages-dev"):
+                  for package in lock.get(section, []):
+                      if package.get("name") == "laravel/framework":
+                          return package.get("version", "")
+              return ""
+
+          base_version = framework_version("/tmp/base-composer.lock")
+          head_version = framework_version("/tmp/head-composer.lock")
+          changed_files = {
+              line.strip()
+              for line in open("/tmp/changed-files", encoding="utf-8")
+              if line.strip()
+          }
+          changed = bool(base_version and head_version and base_version != head_version)
+          safe = (
+              os.environ["EVENT_NAME"] == "pull_request_target"
+              and os.environ["PR_USER"] == "dependabot[bot]"
+              and os.environ["HEAD_REPOSITORY"] == os.environ["REPOSITORY"]
+              and os.environ["HEAD_REF"].startswith("dependabot/composer/")
+              and bool(changed_files)
+              and changed_files <= {"composer.json", "composer.lock"}
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"laravel_changed={'true' if changed else 'false'}\n")
+              out.write(f"safe_dependabot_pr={'true' if safe else 'false'}\n")
+
+          print(f"laravel/framework: {base_version or '(missing)'} -> {head_version or '(missing)'}")
+          print(f"changed_files={sorted(changed_files)}")
+          print(f"safe_dependabot_pr={safe}")
+          PY
+
+  auto-merge-dependabot:
+    runs-on: ubuntu-latest
+    needs: detect
+    if: ${{ needs.detect.outputs.safe_dependabot_pr == 'true' && needs.detect.outputs.laravel_changed == 'true' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge "$PR_URL" --auto --squash --delete-branch
+
+  dispatch-benchmark-batch:
+    runs-on: ubuntu-latest
+    needs: detect
+    if: ${{ github.event_name == 'push' && needs.detect.outputs.laravel_changed == 'true' }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch benchmark batch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: gh workflow run benchmark-all.yml --repo "$REPOSITORY" --ref "$REF_NAME"

@@ -1,0 +1,108 @@
+name: Benchmark Server
+
+on:
+  workflow_call:
+    inputs:
+      server:
+        description: "Compose server name"
+        required: true
+        type: string
+      workloads:
+        description: "Workloads (space-separated)"
+        default: "hello hash mandelbrot json db"
+        type: string
+      concurrencies:
+        description: "Concurrency levels (space-separated)"
+        default: "8 16 32 64 128"
+        type: string
+      runs:
+        description: "Runs per cell"
+        default: "2"
+        type: string
+      duration:
+        description: "Measured seconds per run"
+        default: "20"
+        type: string
+      warmup:
+        description: "Discarded warmup seconds per concurrency level"
+        default: "10"
+        type: string
+    secrets:
+      GH_PAT:
+        required: false
+
+env:
+  GITHUB_REGISTRY: ghcr.io
+  GITHUB_USERNAME: ${{ github.actor }}
+  GH_PAT: ${{ secrets.GH_PAT }}
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: read
+    steps:
+      - name: Install `docker-compose` for local simulations
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        if: ${{ env.ACT }}
+        with:
+          version: "2.14.2"
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer
+
+      - name: Login to GitHub Container Registry
+        if: ${{ env.GH_PAT != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GITHUB_REGISTRY }}
+          username: ${{ env.GITHUB_USERNAME }}
+          password: ${{ env.GH_PAT }}
+
+      - name: Cache PHP packages
+        uses: actions/cache@v5
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          make deps
+          make key
+
+      - name: Build images
+        run: make build
+
+      - name: Run ${{ inputs.server }} benchmark
+        env:
+          SERVERS: ${{ inputs.server }}
+          WORKLOADS: ${{ inputs.workloads }}
+          CONCURRENCIES: ${{ inputs.concurrencies }}
+          RUNS: ${{ inputs.runs }}
+          DURATION: ${{ inputs.duration }}
+          WARMUP: ${{ inputs.warmup }}
+        run: make bench
+
+      - name: Aggregate server results
+        run: make report
+
+      - name: Upload results and report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-${{ inputs.server }}-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            results/*.json
+            RESULTS.md
+            docs/

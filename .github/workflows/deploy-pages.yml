@@ -3,8 +3,24 @@ name: Deploy Benchmark Pages
 on:
   workflow_dispatch:
     inputs:
-      benchmark_run_id:
-        description: "Benchmark workflow run id to deploy, for example 27112848600"
+      swoole_run_id:
+        description: "Swoole benchmark workflow run ID"
+        required: true
+        type: string
+      openswoole_run_id:
+        description: "OpenSwoole benchmark workflow run ID"
+        required: true
+        type: string
+      roadrunner_run_id:
+        description: "RoadRunner benchmark workflow run ID"
+        required: true
+        type: string
+      frankenphp_run_id:
+        description: "FrankenPHP benchmark workflow run ID"
+        required: true
+        type: string
+      fpm_run_id:
+        description: "PHP-FPM benchmark workflow run ID"
         required: true
         type: string
 
@@ -28,28 +44,65 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download benchmark artifact
+      - name: Download Swoole artifact
         uses: actions/download-artifact@v5
         with:
-          name: benchmark-${{ inputs.benchmark_run_id }}
-          run-id: ${{ inputs.benchmark_run_id }}
+          name: benchmark-swoole-${{ inputs.swoole_run_id }}
+          run-id: ${{ inputs.swoole_run_id }}
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
-          path: benchmark-artifact
+          path: benchmark-artifacts/swoole
+
+      - name: Download OpenSwoole artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: benchmark-openswoole-${{ inputs.openswoole_run_id }}
+          run-id: ${{ inputs.openswoole_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: benchmark-artifacts/openswoole
+
+      - name: Download RoadRunner artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: benchmark-roadrunner-${{ inputs.roadrunner_run_id }}
+          run-id: ${{ inputs.roadrunner_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: benchmark-artifacts/roadrunner
+
+      - name: Download FrankenPHP artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: benchmark-frankenphp-${{ inputs.frankenphp_run_id }}
+          run-id: ${{ inputs.frankenphp_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: benchmark-artifacts/frankenphp
+
+      - name: Download PHP-FPM artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: benchmark-fpm-${{ inputs.fpm_run_id }}
+          run-id: ${{ inputs.fpm_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: benchmark-artifacts/fpm
 
       - name: Rebuild dashboard from benchmark results
-        env:
-          BENCHMARK_RUN_ID: ${{ inputs.benchmark_run_id }}
         run: |
           rm -rf results docs
           mkdir -p results
-          cp benchmark-artifact/results/*.json results/
+          find benchmark-artifacts -path '*/results/*.json' -exec cp {} results/ \;
           python3 bench/aggregate.py
 
       - name: Verify dashboard files
         run: |
           test -f docs/index.html
           test -f docs/summary.json
+          for server in swoole openswoole roadrunner frankenphp fpm; do
+            find results -name "${server}_*.json" -print -quit | grep -q .
+          done
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

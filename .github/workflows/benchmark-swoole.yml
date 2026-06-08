@@ -1,0 +1,32 @@
+name: Benchmark - Swoole
+
+on:
+  workflow_dispatch:
+    inputs:
+      workloads:
+        description: "Workloads (space-separated)"
+        default: "hello hash mandelbrot json db"
+      concurrencies:
+        description: "Concurrency levels (space-separated)"
+        default: "8 16 32 64 128"
+      runs:
+        description: "Runs per cell"
+        default: "2"
+      duration:
+        description: "Measured seconds per run"
+        default: "20"
+      warmup:
+        description: "Discarded warmup seconds per concurrency level"
+        default: "10"
+
+jobs:
+  benchmark:
+    uses: ./.github/workflows/_benchmark-server.yml
+    with:
+      server: swoole
+      workloads: ${{ inputs.workloads }}
+      concurrencies: ${{ inputs.concurrencies }}
+      runs: ${{ inputs.runs }}
+      duration: ${{ inputs.duration }}
+      warmup: ${{ inputs.warmup }}
+    secrets: inherit

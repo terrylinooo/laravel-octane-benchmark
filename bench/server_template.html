@@ -940,8 +940,8 @@ function fixedHistogramLabels(bounds) {
   return labels;
 }
 
-function requestDistributionSketchData(w, concurrency) {
-  const cc = cell(SERVER, w, concurrency);
+function requestDistributionSketchData(server, w, concurrency) {
+  const cc = cell(server, w, concurrency);
   if (!cc) {
     return {
       labels: [],
@@ -983,6 +983,44 @@ function requestDistributionSketchData(w, concurrency) {
     total,
     source: 'estimated',
   };
+}
+
+function requestHistogramServers(w, concurrency) {
+  return [SERVER, cmpServer].filter((server, index, servers) =>
+    server && servers.indexOf(server) === index && cell(server, w, concurrency)
+  );
+}
+
+function requestHistogramDatasets(w, concurrency) {
+  return requestHistogramServers(w, concurrency).map(server => {
+    const sketch = requestDistributionSketchData(server, w, concurrency);
+    const color = srvColor(server);
+    const isPrimary = server === SERVER;
+    return {
+      label: srvLabel(server),
+      _server: server,
+      data: sketch.requests,
+      backgroundColor: sketch.requests.map((_, i) =>
+        withAlpha(color, (isPrimary ? .30 : .18) + ((isPrimary ? .62 : .46) * i / Math.max(1, sketch.requests.length - 1)))
+      ),
+      borderColor: color,
+      borderWidth: isPrimary ? 1.5 : 1,
+      borderRadius: 6,
+      yAxisID: 'y',
+    };
+  });
+}
+
+function updateRequestHistogramChart(chart, w, concurrency) {
+  const servers = requestHistogramServers(w, concurrency);
+  const sketches = servers.map(server => requestDistributionSketchData(server, w, concurrency));
+  const primary = sketches[0] || requestDistributionSketchData(SERVER, w, concurrency);
+  const datasets = requestHistogramDatasets(w, concurrency);
+  chart.config._selectedConcurrency = concurrency;
+  chart.data.labels = primary.labels;
+  chart.data.datasets = datasets;
+  chart.options.plugins.legend.display = datasets.length > 1;
+  chart.update();
 }
 
 function wrkCommand(workload, concurrency) {
@@ -1029,18 +1067,8 @@ function bindCpuPopover(container) {
 }
 
 function buildRequestPercentileSketchChart(canvasId, w, concurrency) {
-  const sketch = requestDistributionSketchData(w, concurrency);
-  const datasets = [{
-    label: 'requests',
-    data: sketch.requests,
-    backgroundColor: sketch.requests.map((_, i) =>
-      withAlpha(SRV_C, .30 + (.62 * i / Math.max(1, sketch.requests.length - 1)))
-    ),
-    borderColor: SRV_C,
-    borderWidth: 1,
-    borderRadius: 6,
-    yAxisID: 'y',
-  }];
+  const sketch = requestDistributionSketchData(SERVER, w, concurrency);
+  const datasets = requestHistogramDatasets(w, concurrency);
   const tcol = cssVar('--text-3');
   const grid = cssVar('--grid');
   const ctx = document.getElementById(canvasId);
@@ -1053,7 +1081,12 @@ function buildRequestPercentileSketchChart(canvasId, w, concurrency) {
       interaction: { mode: 'nearest', intersect: true },
       plugins: {
         legend: {
-          display: false,
+          display: datasets.length > 1,
+          labels: {
+            color: tcol,
+            usePointStyle: true,
+            pointStyle: 'rectRounded',
+          },
         },
         tooltip: {
           backgroundColor: cssVar('--card'),
@@ -1066,8 +1099,9 @@ function buildRequestPercentileSketchChart(canvasId, w, concurrency) {
           callbacks: {
             afterTitle: (items) => {
               const selectedConcurrency = Number(items[0]?.chart?.config?._selectedConcurrency || concurrency);
-              const cc = cell(SERVER, w, selectedConcurrency);
-              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              const server = items[0]?.dataset?._server || SERVER;
+              const cc = cell(server, w, selectedConcurrency);
+              const sketch = requestDistributionSketchData(server, w, selectedConcurrency);
               const source = sketch.source === 'measured'
                 ? 'raw measured histogram'
                 : sketch.source === 'corrected'
@@ -1075,19 +1109,21 @@ function buildRequestPercentileSketchChart(canvasId, w, concurrency) {
                   : sketch.source === 'demo'
                     ? 'demo estimate for UI preview'
                   : 'estimated from percentiles';
-              return cc ? `c${selectedConcurrency}, ${source}, completed ${Number(cc.requests_median || 0).toLocaleString()} req, errors ${Number(cc.errors || 0).toLocaleString()}` : '';
+              return cc ? `${srvLabel(server)}, c${selectedConcurrency}, ${source}, completed ${Number(cc.requests_median || 0).toLocaleString()} req, errors ${Number(cc.errors || 0).toLocaleString()}` : '';
             },
             label: (it) => {
               if (it.parsed.y == null) return null;
               const selectedConcurrency = Number(it.chart.config._selectedConcurrency || concurrency);
-              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              const server = it.dataset._server || SERVER;
+              const sketch = requestDistributionSketchData(server, w, selectedConcurrency);
               const total = sketch.total || 0;
               const pct = total ? (it.parsed.y / total * 100).toFixed(0) : '0';
-              return ` ${it.label}: ${Math.round(it.parsed.y).toLocaleString()} req (${pct}%)`;
+              return ` ${srvLabel(server)}: ${Math.round(it.parsed.y).toLocaleString()} req (${pct}%)`;
             },
             afterLabel: (it) => {
               const selectedConcurrency = Number(it.chart.config._selectedConcurrency || concurrency);
-              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              const server = it.dataset._server || SERVER;
+              const sketch = requestDistributionSketchData(server, w, selectedConcurrency);
               if (sketch.source === 'measured') return 'raw requests measured by wrk';
               if (sketch.source === 'corrected') return 'coordinated-omission corrected sample count';
               if (sketch.source === 'demo') return 'estimated demo bucket, not a measured histogram';
@@ -1156,13 +1192,7 @@ function makeWorkloadCharts(w, container) {
       const concurrency = Number(button.dataset.concurrency);
       tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', Number(b.dataset.concurrency) === concurrency));
       distChart.config._selectedConcurrency = concurrency;
-      const sketch = requestDistributionSketchData(w, concurrency);
-      distChart.data.labels = sketch.labels;
-      distChart.data.datasets[0].data = sketch.requests;
-      distChart.data.datasets[0].backgroundColor = sketch.requests.map((_, i) =>
-        withAlpha(SRV_C, .30 + (.62 * i / Math.max(1, sketch.requests.length - 1)))
-      );
-      distChart.update();
+      updateRequestHistogramChart(distChart, w, concurrency);
       updateWrkCommand(container, w, concurrency);
     });
   });
@@ -1241,9 +1271,18 @@ function renderGroups() {
 /* ===== RESTYLE (on comparison change / theme) ===== */
 function restyleCharts() {
   charts.forEach(ch => {
-    if (!ch.config._serverChart) return;
-    ch.data.datasets.forEach(ds => { if (ds._server) applyStyle(ds); });
-    ch.update();
+    if (ch.config._serverChart) {
+      ch.data.datasets.forEach(ds => { if (ds._server) applyStyle(ds); });
+      ch.update();
+      return;
+    }
+    if (ch.config._requestPercentileSketchChart) {
+      updateRequestHistogramChart(
+        ch,
+        ch.config._requestPercentileSketchChart.workload,
+        Number(ch.config._selectedConcurrency)
+      );
+    }
   });
 }
 

@@ -85,13 +85,29 @@ This repo is set up to generate benchmark reports on a GitHub Actions runner by 
 
 ### GitHub Actions
 
-Use the **Benchmark** workflow in `.github/workflows/benchmark.yml`:
+Run these five workflows from the Actions tab:
 
-1. Open the Actions tab.
-2. Choose **Benchmark**.
-3. Click **Run workflow**.
+- **Benchmark - Swoole**
+- **Benchmark - OpenSwoole**
+- **Benchmark - RoadRunner**
+- **Benchmark - FrankenPHP**
+- **Benchmark - PHP-FPM**
 
-The workflow runs on `ubuntu-24.04`, builds `RESULTS.md` and `docs/`, then uploads `results/` and `docs/` as artifacts. Set the `publish` input if you want the generated dashboard deployed to GitHub Pages.
+Each workflow runs independently on `ubuntu-24.04` and uploads an artifact named
+`benchmark-{server}-{run_id}`. This makes long runs independently retryable and
+prevents one server failure from discarding the other four results.
+
+There are two deployment modes:
+
+- **Automatic:** run **Benchmark All**. It runs the five servers in parallel with
+  the same inputs, merges that run's five artifacts, and deploys the combined
+  dashboard when `publish` is enabled.
+- **Manual assembly:** run the five server workflows separately, then run
+  **Deploy Benchmark Pages** with their five run IDs.
+
+When `laravel/framework` changes on `main`, the **Laravel Update** workflow
+automatically dispatches **Benchmark All**, which publishes after all five
+benchmarks succeed.
 
 ### Local Machine
 
