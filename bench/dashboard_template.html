@@ -437,7 +437,6 @@
   .wl-table .v-err { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
   .wl-table .v-err.bad { color: #c2410c; font-weight: 700; }
   .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
-  .wl-table th.selected-concurrency,
   .wl-table td.selected-concurrency {
     background: var(--accent-soft);
   }
@@ -683,7 +682,6 @@ const LATENCY_METRICS = [
 ];
 const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
 let SELECTED_METRIC = DEFAULT_LATENCY_METRIC;
-const METRIC_BUCKET_FILL = 'rgba(254, 240, 138, .32)';
 const SRV_LABEL = {
   swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
   frankenphp: "FrankenPHP", fpm: "PHP-FPM"
@@ -922,16 +920,6 @@ function applyVisibility() {
     ch.data.datasets.forEach(ds => {
       if (ds._server) ds.hidden = hidden.has(ds._server);
     });
-    if (ch.config._requestHistogramChart) {
-      const workload = ch.config._requestHistogramChart.workload;
-      const concurrency = Number(ch.config._selectedConcurrency);
-      const distributions = DATA.servers.map(server => ({
-        server,
-        distribution: requestDistributionData(server, workload, concurrency),
-      }));
-      const labels = distributions.find(x => x.distribution.labels.length)?.distribution.labels || [];
-      ch.config._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
-    }
     ch.update();
   });
 }
@@ -1025,55 +1013,6 @@ function requestDistributionData(server, workload, concurrency) {
     },
   };
 }
-
-function selectedMetricBucketIndex(server, workload, concurrency, distribution) {
-  const cc = cell(server, workload, concurrency);
-  if (!cc) return -1;
-  const metricValue = cc[SELECTED_METRIC.key];
-  if (metricValue == null) return -1;
-  if (distribution.source === 'estimated') {
-    return { p50_median: 0, p90_median: 1, p95_median: 2, p99_median: 3 }[SELECTED_METRIC.key] ?? -1;
-  }
-  const bounds = distribution.bounds || [];
-  if (!bounds.length) return -1;
-  const index = bounds.findIndex(upper => metricValue <= upper);
-  return index === -1 ? bounds.length : index;
-}
-
-function selectedMetricBucketIndexes(distributions, workload, concurrency, labels) {
-  const indexes = new Set();
-  distributions.forEach(({ server, distribution }) => {
-    if (hidden.has(server)) return;
-    if (!distribution || distribution.labels.join('|') !== labels.join('|')) return;
-    const index = selectedMetricBucketIndex(server, workload, concurrency, distribution);
-    if (index >= 0) indexes.add(index);
-  });
-  return [...indexes];
-}
-
-const metricBucketBackgroundPlugin = {
-  id: 'metricBucketBackground',
-  beforeDatasetsDraw(chart) {
-    const indexes = chart.config._metricBucketIndexes || [];
-    const x = chart.scales.x;
-    const area = chart.chartArea;
-    if (!indexes.length || !x || !area) return;
-    const tickCount = chart.data.labels.length;
-    if (!tickCount) return;
-    const ctx = chart.ctx;
-    ctx.save();
-    ctx.fillStyle = METRIC_BUCKET_FILL;
-    indexes.forEach(index => {
-      if (index < 0 || index >= tickCount) return;
-      const center = x.getPixelForTick(index);
-      const left = index === 0 ? area.left : (x.getPixelForTick(index - 1) + center) / 2;
-      const right = index === tickCount - 1 ? area.right : (center + x.getPixelForTick(index + 1)) / 2;
-      ctx.fillRect(left, area.top, right - left, area.bottom - area.top);
-    });
-    ctx.restore();
-  }
-};
-Chart.register(metricBucketBackgroundPlugin);
 
 function distributionSourceLabel(source) {
   return {
@@ -1189,10 +1128,8 @@ function buildRequestHistogramChart(canvasId, workload, concurrency) {
       }
     }
   };
-  chartConfig._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
   const ch = new Chart(document.getElementById(canvasId), chartConfig);
   ch.config._serverChart = true;
-  ch.config._requestHistogramChart = { workload };
   ch.config._selectedConcurrency = concurrency;
   charts.push(ch);
   return ch;
@@ -1205,7 +1142,6 @@ function updateRequestHistogramChart(chart, workload, concurrency) {
   }));
   const labels = distributions.find(x => x.distribution.labels.length)?.distribution.labels || [];
   chart.config._selectedConcurrency = concurrency;
-  chart.config._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
   chart.data.labels = labels;
   chart.data.datasets.forEach(dataset => {
     const distribution = distributions.find(x => x.server === dataset._server)?.distribution;
