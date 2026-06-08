@@ -16,6 +16,12 @@
 
 簡單講：跑一次矩陣，打開報告，看曲線，不要只相信單一個最快數字。
 
+## 為什麼是 2 CPU / 4 GB？
+
+用超規格機器跑 framework benchmark，對多數現代部署來說沒有太大實務意義。現在是容器化時代，應用通常以小型、可重複的單位部署，流量增加時再水平擴充。真正值得回答的問題，不是某個 framework 在資源充裕的高階伺服器上能跑多快，而是一個常規容器在需要增加下一個 replica 之前，能提供多少穩定吞吐量與尾端延遲表現。
+
+因此，本 benchmark 將 `2 CPU / 4 GB RAM` 視為應用容器的基本單位。這是常見的小型正式環境配置，足以正常執行 Laravel，同時也能清楚呈現 worker 競爭、記憶體成本與飽和行為。以這個規格量到的結果，比少有應用會獨占的高階機器跑分，更適合用來評估容量、自動擴容門檻與成本。
+
 最快也不代表最好。Swoole/OpenSwoole、RoadRunner、FrankenPHP 各自有不同取捨，也各自適合不同的應用情境。真正選型時還會牽涉到維運模式、生態支援、部署方式、extension 相容性，以及團隊熟悉度。這些不在本專案討論範圍內；本專案只負責在公平、可重現的環境下把數據跑出來。
 
 ## 結果
@@ -135,7 +141,7 @@ BENCH_MANDELBROT_REPEAT
 BENCH_JSON_ITERATIONS
 ```
 
-`benchmark.sh` 預設會測大約 `2 * SUT_CPUS` 的 worker 數，然後再測它的兩倍。預設 4-vCPU runner 會讓被測 server 拿 2 CPUs，所以預設 worker sweep 是 `4 8`。如果 8 workers 的吞吐量比 4 低，或 p99 更差，這是有效結果：通常代表額外 PHP workers 帶來 scheduler contention、cache pressure，或 DB/socket contention，但沒有增加真正可用的 CPU 容量。
+`benchmark.sh` 預設會先測 2-worker baseline，再測大約 `2 * SUT_CPUS` 的 worker 數與它的兩倍。預設 4-vCPU runner 會讓被測 server 拿 2 CPUs，所以預設 worker sweep 是 `2 4 8`。如果較高 worker 數的吞吐量更低，或 p99 更差，這是有效結果：通常代表額外 PHP workers 帶來 scheduler contention、cache pressure，或 DB/socket contention，但沒有增加真正可用的 CPU 容量。
 
 每個 server/workload 組合都會在每個並發量下先暖機，再進入正式測量。預設 wrk timeout 是 15 秒，這樣慢到飽和的 cell 仍然能被記錄，而不是直接被當成看不見的失敗。
 

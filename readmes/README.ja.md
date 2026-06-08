@@ -8,6 +8,12 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 
 ほとんどの Octane ベンチマークは単一の「最速」値だけを公表し、互いに矛盾しています。ワークロード、ワーカー数、負荷生成ツール、ウォームかコールドかといった条件がこっそり異なっているにもかかわらず、それらをほとんど開示しないからです。本プロジェクトは、あらゆる交絡変数を固定し、そのすべてを開示し、**ワークロードごとのレイテンシ交差曲線**を公表します。結論は明確に「場合による—そして、どう場合によるのかを正確にここに示す。自分で実行してみてほしい」です。
 
+## なぜ 2 CPU / 4 GB なのか
+
+過剰な性能を持つマシンで framework benchmark を実行しても、現代の多くのデプロイにとって実用的な価値はほとんどありません。現在はコンテナの時代であり、アプリケーションは通常、小さく再現可能な単位でデプロイされ、トラフィックの増加に応じて水平スケールします。本当に知りたいのは、潤沢なリソースを持つ高性能サーバーで framework がどこまで速く動くかではなく、一般的なコンテナが次の replica を追加するまでに、どれだけ安定したスループットとテールレイテンシを提供できるかです。
+
+そのため、この benchmark では `2 CPU / 4 GB RAM` をアプリケーションコンテナの基本単位としています。これは小規模な本番環境で一般的な割り当てであり、Laravel を適切に動かせる一方で、worker の競合、メモリコスト、飽和挙動も明確に表れます。この規模で得られる結果は、単一の framework プロセスに専有させることがほとんどない高性能マシンのスコアよりも、キャパシティ計画、自動スケーリングのしきい値、コスト比較に役立ちます。
+
 最速であることは、必ずしも最良であることを意味しません。Swoole/OpenSwoole、RoadRunner、 FrankenPHP にはそれぞれ異なるトレードオフがあり、向いているアプリケーションの形も異なります。実際の選定では、運用モデル、エコシステムのサポート、デプロイ方式、拡張との互換性、チームの習熟度も関わります。本プロジェクトはその選定判断を扱いません。公平で再現可能な環境でデータを出すことだけを目的としています。
 
 ## Results
@@ -26,7 +32,7 @@ Laravel Octane のアプリケーションサーバー（**Swoole**、**OpenSwoo
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **スイープ**（`WORKER_COUNTS`、デフォルトは ~2/cpu とその ×2 → 2-cpu ランナーでは `4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
+| Workers | **スイープ**（`WORKER_COUNTS`、2-worker の基準値、~2/cpu、その ×2 → 2-cpu ランナーでは `2 4 8`）。FPM の `max_children` を一致させる | マトリクスの一次元—各サーバーがワーカーとともにどうスケールするかを見る。1 パスごとにすべてのサーバー（FPM 対照群を含む）で同じ数。CPU が oversubscribe されると、ワーカーを増やすとかえって遅くなることがある |
 | CPU | SUT は予約済みの 2 コアを除くすべてのホストコアを使用（4 コアランナーでは `cpuset 2-3`） | どのサーバーにも同じ CPU 予算を与える |
 | 負荷生成 + DB | `wrk` と `mysql` に専用コアを 1 つずつ割り当てる（`0` と `1`）。SUT とは分離 | 生成ツールと DB は SUT の CPU を奪わず、`/bench/db` は MySQL の CPU 競合を受けない |
 | Memory | `mem_limit=4g`（env `MEM_LIMIT`） | 寛大で **均等な** 上限—16 GB ランナーでは決して縛られないため、どのサーバーも OOM ペナルティを受けず、ピーク RSS は真の最高水位を読み取る（クランプされない）。小規模 VPS シナリオには `MEM_LIMIT=512m` を設定 |
@@ -71,7 +77,7 @@ make smoke     # quick end-to-end smoke run (a few minutes)
 
 env で調整可能: `SERVERS`、`WORKLOADS`、`CONCURRENCIES`、`WORKER_COUNTS`、`RUNS`、`DURATION`、`WARMUP`、`TIMEOUT`、`BENCH_HASH_ITERATIONS`、`BENCH_MANDELBROT_DIM`、`BENCH_MANDELBROT_MAX_ITER`、`BENCH_MANDELBROT_REPEAT`、`BENCH_JSON_ITERATIONS`。各（server, workload）は実行前に **各並行数で**ウォームアップされ、`wrk --timeout`（デフォルト 15s）により、飽和した遅いセルもエラーとして打ち切らず計測できます。
 
-`benchmark.sh` はデフォルトでおよそ `2 * SUT_CPUS` のワーカー数と、その 2 倍をテストします。デフォルトの 4-vCPU ランナーでは SUT が 2 CPUs を得るため、デフォルトの worker sweep は `4 8` です。8 workers のスループットが 4 より低い、または p99 が悪い場合も有効な結果です。通常は、追加の PHP workers が scheduler contention、cache pressure、DB/socket contention を増やし、有効な CPU 容量を増やしていないことを示します。
+`benchmark.sh` はデフォルトで 2-worker baseline を測定し、その後におよそ `2 * SUT_CPUS` のワーカー数と、その 2 倍をテストします。デフォルトの 4-vCPU ランナーでは SUT が 2 CPUs を得るため、デフォルトの worker sweep は `2 4 8` です。ワーカー数を増やしたときにスループットが低下したり p99 が悪化したりしても、それは有効な結果です。通常は、追加の PHP workers が scheduler contention、cache pressure、DB/socket contention を増やし、有効な CPU 容量を増やしていないことを示します。
 
 ## How it works
 

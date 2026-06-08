@@ -8,6 +8,12 @@
 
 大多数 Octane 基准测试只发布一个"最快"的数字，而且彼此互相矛盾，因为它们在工作负载、worker 数量、压测工具、热态与冷态上悄悄各不相同，却几乎从不披露这些差异。本项目锁定了每一个干扰变量，全部公开披露，并发布**按工作负载划分的延迟交叉曲线**。结论明确就是"视情况而定——而这里恰恰说清了取决于什么。去亲自跑一遍吧。"
 
+## 为什么是 2 CPU / 4 GB？
+
+在超大规格机器上运行 framework benchmark，对大多数现代部署并没有多少实际参考价值。现在是容器化时代，应用通常以小型、可重复的单元部署，并在流量增长时进行水平扩容。真正有意义的问题，不是某个 framework 在资源充裕的高端服务器上能跑多快，而是一个常规容器在需要增加下一个副本之前，能够提供多少稳定吞吐量和尾延迟表现。
+
+因此，本 benchmark 将 `2 CPU / 4 GB RAM` 作为应用容器的基本单元。这是常见的小型生产配置，足以正常运行 Laravel，同时又能暴露 worker 争用、内存成本和饱和行为。以这个规格测得的结果，比使用几乎不会专门分配给单个 framework 进程的高端机器跑分，更适合用于容量规划、自动扩容阈值和成本比较。
+
 最快也不等于最好。Swoole/OpenSwoole、RoadRunner、FrankenPHP 各有各的取舍，也适合不同的应用场景。真正选型时还会牵涉到运维模式、生态支持、部署方式、extension 兼容性，以及团队熟悉度。这些不在本项目的讨论范围内；本项目只负责在公平、可复现的环境下把数据跑出来。
 
 ## Results
@@ -26,7 +32,7 @@
 
 | Control | Value | Why |
 |---|---|---|
-| Workers | **扫描**（`WORKER_COUNTS`，默认约 2/cpu 及其 ×2 → 在 2-cpu runner 上为 `4 8`）；FPM `max_children` 与之匹配 | 这是矩阵的一个维度——看每个服务器如何随 worker 数扩展。每一遍中，每个服务器（含 FPM 对照组）都用相同的数量；CPU 已经 oversubscribe 后，更多 workers 反而可能更慢 |
+| Workers | **扫描**（`WORKER_COUNTS`，包含 2-worker 基线、约 2/cpu 及其 ×2 → 在 2-cpu runner 上为 `2 4 8`）；FPM `max_children` 与之匹配 | 这是矩阵的一个维度——看每个服务器如何随 worker 数扩展。每一遍中，每个服务器（含 FPM 对照组）都用相同的数量；CPU 已经 oversubscribe 后，更多 workers 反而可能更慢 |
 | CPU | SUT 使用扣除两个保留核心后的所有主机核心（4 核 runner 上为 `cpuset 2-3`） | 每个服务器都获得相同的 CPU 预算 |
 | 压测工具 + DB | `wrk` 和 `mysql` 各使用一个独立核心（`0` 和 `1`），与 SUT 分离 | 压测工具和数据库都不会抢占 SUT 的 CPU，`/bench/db` 也不会受到 MySQL CPU 争用影响 |
 | Memory | `mem_limit=4g`（环境变量 `MEM_LIMIT`） | 慷慨的**相等**上限——在 16 GB runner 上从不触顶，所以没有服务器会因 OOM 受罚，峰值 RSS 读到的是真实的峰值水位（未被钳制）。设置 `MEM_LIMIT=512m` 可模拟小型 VPS 场景 |
@@ -71,7 +77,7 @@ make smoke     # quick end-to-end smoke run (a few minutes)
 
 可通过环境变量调节：`SERVERS`、`WORKLOADS`、`CONCURRENCIES`、`WORKER_COUNTS`、`RUNS`、`DURATION`、`WARMUP`、`TIMEOUT`、`BENCH_HASH_ITERATIONS`、`BENCH_MANDELBROT_DIM`、`BENCH_MANDELBROT_MAX_ITER`、`BENCH_MANDELBROT_REPEAT`、`BENCH_JSON_ITERATIONS`。每个 (server, workload) 在其运行之前都会**在每个并发量上**预热，而 `wrk --timeout`（默认 15s）让一个缓慢、饱和的单元格得以被测量，而不是作为错误被剔除。
 
-`benchmark.sh` 默认会测试大约 `2 * SUT_CPUS` 的 worker 数，然后再测试它的两倍。默认 4-vCPU runner 会让被测 server 拿 2 CPUs，所以默认 worker sweep 是 `4 8`。如果 8 workers 的吞吐量低于 4，或 p99 更差，这是有效结果：通常代表额外 PHP workers 带来 scheduler contention、cache pressure，或 DB/socket contention，但没有增加真正可用的 CPU 容量。
+`benchmark.sh` 默认会先测试 2-worker baseline，再测试大约 `2 * SUT_CPUS` 的 worker 数及其两倍。默认 4-vCPU runner 会让被测 server 拿 2 CPUs，所以默认 worker sweep 是 `2 4 8`。如果较高 worker 数的吞吐量更低，或 p99 更差，这是有效结果：通常代表额外 PHP workers 带来 scheduler contention、cache pressure，或 DB/socket contention，但没有增加真正可用的 CPU 容量。
 
 ## How it works
 

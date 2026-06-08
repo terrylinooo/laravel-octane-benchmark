@@ -8,6 +8,12 @@ Un banc d'essai reproductible qui mesure les serveurs applicatifs Laravel Octane
 
 La plupart des benchmarks Octane publient un unique chiffre du « plus rapide » et se contredisent les uns les autres, parce qu'ils diffèrent discrètement sur la charge de travail, le nombre de workers, le générateur de charge et le démarrage à chaud ou à froid, et qu'ils ne divulguent presque jamais rien de tout cela. Celui-ci fige toutes les variables parasites, les divulgue toutes, et publie des **courbes de croisement de latence par charge de travail**. Le verdict est explicitement « ça dépend — voici exactement de quoi ça dépend. Allez le lancer vous-même. »
 
+## Pourquoi 2 CPU / 4 GB ?
+
+Exécuter des benchmarks de frameworks sur une machine surdimensionnée a peu de valeur pratique pour la plupart des déploiements modernes. Nous sommes à l'ère des conteneurs : les applications sont généralement déployées sous forme de petites unités reproductibles, puis mises à l'échelle horizontalement lorsque le trafic augmente. La question utile n'est pas de savoir à quelle vitesse un framework peut fonctionner sur un serveur haut de gamme aux ressources abondantes, mais quel débit stable et quelle latence de queue un conteneur ordinaire peut fournir avant qu'une réplique supplémentaire soit nécessaire.
+
+Ce benchmark considère donc `2 CPU / 4 GB RAM` comme l'unité du conteneur applicatif. Il s'agit d'une petite allocation courante en production, suffisante pour exécuter Laravel correctement tout en révélant la contention entre workers, le coût mémoire et le comportement à saturation. Les résultats mesurés à cette échelle sont plus utiles pour la planification de capacité, les seuils d'auto-scaling et la comparaison des coûts que les scores produits par une machine que peu d'applications réserveraient à un seul processus de framework.
+
 Le plus rapide n'est pas automatiquement le meilleur. Swoole/OpenSwoole, RoadRunner et FrankenPHP ont chacun leurs compromis et leurs scénarios d'application naturels. Un vrai choix dépend aussi du modèle d'exploitation, du support de l'écosystème, du mode de déploiement, de la compatibilité des extensions et de la familiarité de l'équipe. Ce projet ne cherche pas à trancher cette décision ; il se contente d'exécuter les serveurs dans un environnement équitable et reproductible, puis de publier les données.
 
 ## Résultats
@@ -26,7 +32,7 @@ Chaque cellule = `{server, workload, workers, concurrency, run}` et est stockée
 
 | Contrôle | Valeur | Pourquoi |
 |---|---|---|
-| Workers | **balayés** (`WORKER_COUNTS`, par défaut ~2/cpu et son ×2 → `4 8` sur le runner à 2 cpu) ; le `max_children` de FPM est aligné | une dimension de la matrice — voyez comment chaque serveur passe à l'échelle avec les workers. Même nombre pour chaque serveur (y compris le contrôle FPM) à chaque passe ; plus de workers peuvent ralentir une fois le CPU surabonné |
+| Workers | **balayés** (`WORKER_COUNTS`, avec une base de 2 workers, ~2/cpu et son ×2 → `2 4 8` sur le runner à 2 cpu) ; le `max_children` de FPM est aligné | une dimension de la matrice — voyez comment chaque serveur passe à l'échelle avec les workers. Même nombre pour chaque serveur (y compris le contrôle FPM) à chaque passe ; plus de workers peuvent ralentir une fois le CPU surabonné |
 | CPU | le SUT reçoit tous les cœurs au-dessus des deux cœurs réservés (`cpuset 2-3` sur le runner à 4 cœurs) | chaque serveur reçoit le même budget CPU |
 | Générateur + DB | `wrk` et `mysql` ont chacun un cœur dédié (`0` et `1`), séparé du SUT | ni le générateur ni la base de données ne prennent du CPU au SUT ; `/bench/db` évite la contention CPU de MySQL |
 | Mémoire | `mem_limit=4g` (env `MEM_LIMIT`) | plafond **égal** généreux — il ne contraint jamais sur le runner à 16 Go, donc aucun serveur n'est pénalisé par l'OOM et la RSS de pointe relève le vrai pic d'utilisation (non bridé). Définissez `MEM_LIMIT=512m` pour un scénario de petit VPS |
@@ -71,7 +77,7 @@ make smoke     # quick end-to-end smoke run (a few minutes)
 
 Réglable via les variables d'environnement : `SERVERS`, `WORKLOADS`, `CONCURRENCIES`,`WORKER_COUNTS`, `RUNS`, `DURATION`, `WARMUP`, `TIMEOUT`, `BENCH_HASH_ITERATIONS`,`BENCH_MANDELBROT_DIM`, `BENCH_MANDELBROT_MAX_ITER`, `BENCH_MANDELBROT_REPEAT`,`BENCH_JSON_ITERATIONS`. Chaque (server, workload) est chauffé **à chaque concurrence** avant ses exécutions, et `wrk --timeout` (15s par défaut) permet de mesurer une cellule lente et saturée plutôt que de la censurer sous forme d'erreurs.
 
-Par défaut, `benchmark.sh` teste environ `2 * SUT_CPUS` workers puis le double. Sur le runner par défaut à 4 vCPU, le SUT reçoit 2 CPUs, donc le balayage de workers par défaut est `4 8`. Si 8 workers affichent un débit plus faible ou un p99 pire que 4, c'est un résultat valide : cela signifie généralement que les workers PHP supplémentaires ajoutent de la contention du scheduler, de la pression cache ou de la contention DB/socket sans ajouter de capacité CPU utile.
+Par défaut, `benchmark.sh` teste d'abord une base de 2 workers, puis environ `2 * SUT_CPUS` workers et le double de cette valeur. Sur le runner par défaut à 4 vCPU, le SUT reçoit 2 CPUs, donc le balayage de workers par défaut est `2 4 8`. Si un nombre de workers plus élevé réduit le débit ou dégrade le p99, c'est un résultat valide : cela signifie généralement que les workers PHP supplémentaires ajoutent de la contention du scheduler, de la pression cache ou de la contention DB/socket sans ajouter de capacité CPU utile.
 
 ## Comment ça marche
 

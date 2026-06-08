@@ -14,6 +14,12 @@ The goal is not to crown one server as "the fastest". Most Octane benchmarks end
 
 In short: run the matrix, open the report, and compare the curves instead of trusting one headline number.
 
+## Why 2 CPU / 4 GB?
+
+Running framework benchmarks on an oversized machine has little practical value for most modern deployments. We are in the container era: applications are usually deployed as small, repeatable units and scaled horizontally when traffic increases. The useful question is not how fast one framework can run on a high-end server with abundant resources, but how much stable throughput and tail latency one ordinary container can deliver before another replica is needed.
+
+This benchmark therefore treats `2 CPU / 4 GB RAM` as the application container unit. It is a common small production allocation, large enough to run Laravel properly while still exposing worker contention, memory cost, and saturation behavior. Results measured at this size are more useful for capacity planning, autoscaling thresholds, and cost comparisons than scores produced by a machine few applications would dedicate to a single framework process.
+
 Fastest also does not automatically mean best. Swoole/OpenSwoole, RoadRunner, and FrankenPHP each have their own trade-offs and fit different application shapes. Choosing between them involves operational model, ecosystem support, deployment style, extension compatibility, and team familiarity. This project does not try to settle that decision; it only runs the servers in a fair, repeatable environment and publishes the data.
 
 ## Results
