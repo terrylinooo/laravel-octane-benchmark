@@ -326,12 +326,53 @@
   .worker-toggle { margin-left: 0; }
   .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .chart-box { min-width: 0; }
+  .chart-box.dist {
+    grid-column: 1 / -1;
+    border-top: 1px dashed var(--border);
+    padding-top: 14px;
+  }
   .chart-box .ct {
     font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px;
     display: flex; align-items: center; justify-content: space-between;
   }
   .chart-box .ct .hint { font-size: 11px; color: var(--text-3); font-weight: 500; }
   .chart-wrap { position: relative; height: 220px; }
+  .dist-tabs {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: var(--pill-bg); border: 1px solid var(--border);
+    padding: 3px; border-radius: 9px; margin-left: auto;
+  }
+  .dist-tabs button {
+    cursor: pointer; border: none; background: transparent; color: var(--text-2);
+    font-size: 12.5px; font-weight: 600; padding: 4px 12px; border-radius: 6px;
+    transition: all .14s; font-family: inherit;
+  }
+  .dist-tabs button:hover { color: var(--text); }
+  .dist-tabs button.active {
+    background: var(--accent); color: #fff;
+    box-shadow: 0 1px 2px rgba(16,24,40,.18);
+  }
+  .wrk-command-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 10px; color: var(--text-3); font-size: 11.5px;
+  }
+  .wrk-command-row code {
+    min-width: 0; overflow-wrap: anywhere; color: var(--text-2);
+    background: var(--pill-bg); border: 1px solid var(--border);
+    padding: 5px 8px; border-radius: 6px; font-size: 11px;
+  }
+  .cpu-help { position: relative; display: inline-flex; align-items: center; }
+  .cpu-help-button {
+    cursor: pointer; border: 0; background: transparent; color: var(--accent);
+    padding: 2px; font: 700 11px/1 inherit;
+  }
+  .cpu-popover {
+    position: absolute; z-index: 20; right: 0; bottom: calc(100% + 8px);
+    width: min(330px, 80vw); padding: 11px 12px; border-radius: 9px;
+    background: var(--card); color: var(--text-2); border: 1px solid var(--border-strong);
+    box-shadow: 0 12px 30px rgba(15,23,42,.18); font-size: 11.5px; line-height: 1.55;
+  }
+  .cpu-popover[hidden] { display: none; }
   .wl-cross {
     grid-column: 1 / -1; margin-top: 2px; font-size: 12px;
     color: var(--text-2); border-top: 1px dashed var(--border);
@@ -368,6 +409,7 @@
   .wl-table .v-p99 { font-weight: 600; font-size: 12.5px; color: var(--text); }
   .wl-table .v-lat { display: block; font-size: 11px; color: var(--text-2); font-weight: 500; }
   .wl-table .v-rps { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wl-table .v-req { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
   .wl-table .v-err { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
   .wl-table .v-err.bad { color: #c2410c; font-weight: 700; }
   .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
@@ -887,8 +929,199 @@ function buildWorkloadChart(canvasId, w, metric, lower, yTitle) {
   return ch;
 }
 
+function fixedHistogramLabels(bounds) {
+  const labels = [];
+  let lower = 0;
+  bounds.forEach(upper => {
+    labels.push(lower === 0 ? `<= ${upper} ms` : `${lower}-${upper} ms`);
+    lower = upper;
+  });
+  labels.push(`> ${bounds[bounds.length - 1]} ms`);
+  return labels;
+}
+
+function requestDistributionSketchData(w, concurrency) {
+  const cc = cell(SERVER, w, concurrency);
+  if (!cc) {
+    return {
+      labels: [],
+      requests: [null, null, null, null, null],
+      thresholds: {},
+      errors: 0,
+      total: null,
+      source: 'missing',
+    };
+  }
+  if (cc.latency_histogram) {
+    const corrected = Boolean(cc.latency_histogram.corrected);
+    const demoEstimated = Boolean(cc.latency_histogram.demo_estimated);
+    return {
+      labels: fixedHistogramLabels(cc.latency_histogram.bounds_ms),
+      requests: cc.latency_histogram.counts_median,
+      thresholds: {},
+      errors: Number(cc.errors || 0),
+      total: Number(cc.latency_histogram.samples_median || cc.requests_median || 0),
+      source: demoEstimated ? 'demo' : corrected ? 'corrected' : 'measured',
+    };
+  }
+  const total = Number(cc.requests_median || 0);
+  const p50 = Math.round(total * .50);
+  const p50p90 = Math.round(total * .40);
+  const p90p95 = Math.round(total * .05);
+  const p95p99 = Math.round(total * .04);
+  const p99plus = Math.max(0, total - p50 - p50p90 - p90p95 - p95p99);
+  return {
+    labels: ['<= p50', 'p50-p90', 'p90-p95', 'p95-p99', '> p99'],
+    requests: [p50, p50p90, p90p95, p95p99, p99plus],
+    thresholds: {
+      p50: cc.p50_median,
+      p90: cc.p90_median,
+      p95: cc.p95_median,
+      p99: cc.p99_median,
+    },
+    errors: Number(cc.errors || 0),
+    total,
+    source: 'estimated',
+  };
+}
+
+function wrkCommand(workload, concurrency) {
+  const manifest = DATA.manifest || {};
+  const args = String(manifest.wrk_cmd || 'wrk -t1 -d20s --timeout 15s --latency')
+    .replace(/^wrk\s+/, '');
+  return `docker compose run --rm wrk ${args} -c${concurrency} -s /report.lua http://${SERVER}:8000/bench/${workload}`;
+}
+
+function wrkCommandRowHtml(workload) {
+  const cpu = (DATA.manifest || {}).wrk_cpuset;
+  const popoverId = `cpu-help-${SERVER}-${workload}`;
+  return `<div class="wrk-command-row">
+    <span>wrk command</span>
+    <code class="wrk-command"></code>
+    <span class="cpu-help">
+      <span>wrk CPU ${cpu != null ? cpu : 'not recorded'}</span>
+      <button type="button" class="cpu-help-button" aria-expanded="false" aria-controls="${popoverId}" aria-label="Can one CPU become a wrk bottleneck?">(?)</button>
+      <span class="cpu-popover" id="${popoverId}" role="dialog" hidden>
+        One isolated CPU is normally enough for this test, and histogram buckets are aggregated after the run, not per request. It is insufficient if wrk reaches 100% CPU before the target saturates, throughput stops scaling, or socket errors/timeouts rise. In that case assign wrk more CPUs and keep them isolated from the application and database.
+      </span>
+    </span>
+  </div>`;
+}
+
+function updateWrkCommand(container, workload, concurrency) {
+  const code = container.querySelector('.wrk-command');
+  if (code) code.textContent = wrkCommand(workload, concurrency);
+}
+
+function bindCpuPopover(container) {
+  const button = container.querySelector('.cpu-help-button');
+  const popover = container.querySelector('.cpu-popover');
+  if (!button || !popover) return;
+  popover.addEventListener('click', event => event.stopPropagation());
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    const open = popover.hidden;
+    document.querySelectorAll('.cpu-popover:not([hidden])').forEach(el => { el.hidden = true; });
+    document.querySelectorAll('.cpu-help-button[aria-expanded="true"]').forEach(el => el.setAttribute('aria-expanded', 'false'));
+    popover.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  });
+}
+
+function buildRequestPercentileSketchChart(canvasId, w, concurrency) {
+  const sketch = requestDistributionSketchData(w, concurrency);
+  const datasets = [{
+    label: 'requests',
+    data: sketch.requests,
+    backgroundColor: sketch.requests.map((_, i) =>
+      withAlpha(SRV_C, .30 + (.62 * i / Math.max(1, sketch.requests.length - 1)))
+    ),
+    borderColor: SRV_C,
+    borderWidth: 1,
+    borderRadius: 6,
+    yAxisID: 'y',
+  }];
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
+  const ctx = document.getElementById(canvasId);
+  const ch = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: sketch.labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: true },
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          backgroundColor: cssVar('--card'),
+          titleColor: cssVar('--text'),
+          bodyColor: cssVar('--text-2'),
+          borderColor: cssVar('--border-strong'),
+          borderWidth: 1,
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            afterTitle: (items) => {
+              const selectedConcurrency = Number(items[0]?.chart?.config?._selectedConcurrency || concurrency);
+              const cc = cell(SERVER, w, selectedConcurrency);
+              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              const source = sketch.source === 'measured'
+                ? 'raw measured histogram'
+                : sketch.source === 'corrected'
+                  ? 'wrk corrected histogram'
+                  : sketch.source === 'demo'
+                    ? 'demo estimate for UI preview'
+                  : 'estimated from percentiles';
+              return cc ? `c${selectedConcurrency}, ${source}, completed ${Number(cc.requests_median || 0).toLocaleString()} req, errors ${Number(cc.errors || 0).toLocaleString()}` : '';
+            },
+            label: (it) => {
+              if (it.parsed.y == null) return null;
+              const selectedConcurrency = Number(it.chart.config._selectedConcurrency || concurrency);
+              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              const total = sketch.total || 0;
+              const pct = total ? (it.parsed.y / total * 100).toFixed(0) : '0';
+              return ` ${it.label}: ${Math.round(it.parsed.y).toLocaleString()} req (${pct}%)`;
+            },
+            afterLabel: (it) => {
+              const selectedConcurrency = Number(it.chart.config._selectedConcurrency || concurrency);
+              const sketch = requestDistributionSketchData(w, selectedConcurrency);
+              if (sketch.source === 'measured') return 'raw requests measured by wrk';
+              if (sketch.source === 'corrected') return 'coordinated-omission corrected sample count';
+              if (sketch.source === 'demo') return 'estimated demo bucket, not a measured histogram';
+              const t = sketch.thresholds;
+              const ranges = {
+                '<= p50': `latency <= ${t.p50} ms`,
+                'p50-p90': `${t.p50} ms < latency <= ${t.p90} ms`,
+                'p90-p95': `${t.p90} ms < latency <= ${t.p95} ms`,
+                'p95-p99': `${t.p95} ms < latency <= ${t.p99} ms`,
+                '> p99': `latency > ${t.p99} ms`,
+              };
+              return ranges[it.label] || '';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false, drawBorder: false }, ticks: { color: tcol, font: { size: 11 } } },
+        y: {
+          grid: { color: grid, drawBorder: false },
+          ticks: { color: tcol, font: { size: 11 } },
+          title: { display: true, text: 'requests', color: tcol, font: { size: 11, weight: '600' } }
+        }
+      }
+    }
+  });
+  ch.config._requestPercentileSketchChart = { workload: w };
+  ch.config._selectedConcurrency = concurrency;
+  charts.push(ch);
+  return ch;
+}
+
 function makeWorkloadCharts(w, container) {
-  const idLat = `lat-${w}`, idRps = `rps-${w}`;
+  const idLat = `lat-${w}`, idRps = `rps-${w}`, idDist = `dist-${w}`;
   container.querySelector('.chart-pair').innerHTML = `
     <div class="chart-box">
       <div class="ct"><span class="lat-chart-title">Latency</span> <span class="hint">lower is better &darr;</span></div>
@@ -898,15 +1131,47 @@ function makeWorkloadCharts(w, container) {
       <div class="ct">Throughput <span class="hint">higher is better &uarr;</span></div>
       <div class="chart-wrap"><canvas id="${idRps}"></canvas></div>
     </div>
+    <div class="chart-box dist">
+      <div class="ct">
+        <span>Request latency histogram <span class="hint">fixed buckets; wrk correction and legacy estimates are labeled</span></span>
+        <span class="dist-tabs" data-chart="${idDist}" aria-label="${w} concurrency"></span>
+      </div>
+      <div class="chart-wrap"><canvas id="${idDist}"></canvas></div>
+      ${wrkCommandRowHtml(w)}
+    </div>
     <div class="wl-cross"><span class="lab">lead</span> <span>${crossoverCaption(w, SELECTED_METRIC.key, true)}</span></div>
     <div class="wl-table-wrap">${workloadTableHtml(w, SERVER)}</div>`;
   buildWorkloadChart(idLat, w, SELECTED_METRIC.key, true, 'ms');
   buildWorkloadChart(idRps, w, 'rps_median', false, 'req/s');
+  const initialConcurrency = DATA.concurrencies[0];
+  const distChart = buildRequestPercentileSketchChart(idDist, w, initialConcurrency);
+  updateWrkCommand(container, w, initialConcurrency);
+  bindCpuPopover(container);
+  const tabs = container.querySelector(`.dist-tabs[data-chart="${idDist}"]`);
+  tabs.innerHTML = DATA.concurrencies.map(c =>
+    `<button type="button" data-concurrency="${c}"${c === initialConcurrency ? ' class="active"' : ''}>c${c}</button>`
+  ).join('');
+  tabs.querySelectorAll('button').forEach(button => {
+    button.addEventListener('click', () => {
+      const concurrency = Number(button.dataset.concurrency);
+      tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', Number(b.dataset.concurrency) === concurrency));
+      distChart.config._selectedConcurrency = concurrency;
+      const sketch = requestDistributionSketchData(w, concurrency);
+      distChart.data.labels = sketch.labels;
+      distChart.data.datasets[0].data = sketch.requests;
+      distChart.data.datasets[0].backgroundColor = sketch.requests.map((_, i) =>
+        withAlpha(SRV_C, .30 + (.62 * i / Math.max(1, sketch.requests.length - 1)))
+      );
+      distChart.update();
+      updateWrkCommand(container, w, concurrency);
+    });
+  });
 }
 
 /* ===== PER-WORKLOAD DATA TABLE ===== */
 const fmtMs = (v) => v == null ? null : `${v} ms`;
 const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`;
+const fmtReq = (v) => v == null ? null : `${Math.round(v).toLocaleString()} req`;
 function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
   DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
@@ -923,8 +1188,9 @@ function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
       }
       const lat = fmtMs(cc[metric.key]);
       const rps = fmtRps(cc.rps_median);
+      const req = fmtReq(cc.requests_median);
       const errors = Number(cc.errors || 0);
-      body += `<td><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
+      body += `<td><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-req">${req != null ? req : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
     });
     body += '</tr>';
   });
@@ -1195,6 +1461,13 @@ renderRankTable();
 renderMemory();
 initScrollSpy();
 initStickyMeta();
+document.addEventListener('click', () => {
+  document.querySelectorAll('.cpu-popover:not([hidden])').forEach(el => { el.hidden = true; });
+  document.querySelectorAll('.cpu-help-button[aria-expanded="true"]').forEach(el => el.setAttribute('aria-expanded', 'false'));
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') document.dispatchEvent(new Event('click'));
+});
 </script>
 </body>
 </html>

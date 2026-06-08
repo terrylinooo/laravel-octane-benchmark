@@ -35,7 +35,7 @@ MANIFEST = {
     "php": "8.4.21", "laravel": "v13.13.0", "octane": "v2.17.4",
     "worker_counts": "4 8", "caps": "cpus=2,cpuset=2-3,mem=4g",
     "commit": "983f68f", "host": "Linux 6.8.0-1015-azure x86_64 (ubuntu-24.04 runner)",
-    "nproc": 4, "wrk_cmd": "wrk -t4 -d30s --timeout 15s --latency",
+    "nproc": 4, "wrk_cmd": "wrk -t1 -d30s --timeout 15s --latency",
     "wrk_cpuset": "0", "mysql_cpuset": "1", "generator_isolated": True,
     "generated_at": "2026-06-04T12:00:00Z", "demo": True,
 }

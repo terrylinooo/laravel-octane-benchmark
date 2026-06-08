@@ -49,6 +49,9 @@ def aggregate(cells):
     out = {}
     for (server, workload, workers, conc), runs in groups.items():
         rps = [r["wrk"]["rps"] for r in runs]
+        requests = [r["wrk"].get("requests") for r in runs if r["wrk"].get("requests") is not None]
+        histograms = [r["wrk"].get("latency_histogram") for r in runs
+                      if r["wrk"].get("latency_histogram")]
         lat = {k: [r["wrk"]["latency_ms"][k] for r in runs if k in r["wrk"]["latency_ms"]]
                for k in ("p50", "p90", "p95", "p99")}
         errors = sum(sum(r["wrk"]["errors"].values()) for r in runs)
@@ -59,6 +62,33 @@ def aggregate(cells):
             "rps_min": round(min(rps), 1), "rps_max": round(max(rps), 1),
             "errors": errors,
         }
+        if requests:
+            row["requests_median"] = int(round(statistics.median(requests)))
+            row["requests_min"] = min(requests)
+            row["requests_max"] = max(requests)
+            row["requests_total"] = sum(requests)
+        else:
+            row["requests_median"] = None
+            row["requests_min"] = None
+            row["requests_max"] = None
+            row["requests_total"] = None
+        if histograms:
+            bounds = histograms[0]["bounds_ms"]
+            count_columns = list(zip(*(h["counts"] for h in histograms)))
+            row["latency_histogram"] = {
+                "corrected": bool(histograms[0].get("corrected", False)),
+                "demo_estimated": bool(histograms[0].get("demo_estimated", False)),
+                "bounds_ms": bounds,
+                "counts_median": [int(round(statistics.median(values))) for values in count_columns],
+                "counts_min": [min(values) for values in count_columns],
+                "counts_max": [max(values) for values in count_columns],
+                "counts_total": [sum(values) for values in count_columns],
+            }
+            row["latency_histogram"]["samples_median"] = sum(
+                row["latency_histogram"]["counts_median"]
+            )
+        else:
+            row["latency_histogram"] = None
         for p, values in lat.items():
             if not values:
                 row[f"{p}_median"] = None
@@ -233,6 +263,16 @@ def main():
     concs = sorted({c for (_, _, _, c) in agg})
     worker_counts = sorted({wk for (_, _, wk, _) in agg})
 
+    for row in agg.values():
+        peak = rss.get((row["server"], row["workload"], row["workers"]))
+        rps = row.get("rps_median")
+        if peak and rps:
+            row["peak_rss_mib"] = peak["peak_rss_mib"]
+            row["memory_efficiency_mib_per_1k_rps"] = round(peak["peak_rss_mib"] / (rps / 1000), 2)
+        else:
+            row["peak_rss_mib"] = None
+            row["memory_efficiency_mib_per_1k_rps"] = None
+
     # ---- summary.json ----
     summary = {
         "manifest": manifest,
@@ -254,7 +294,7 @@ def main():
     # dashboard can show "generated on X" + a download link. GitHub Actions sets
     # GITHUB_RUN_ID / GITHUB_REPOSITORY / GITHUB_SERVER_URL automatically; on a local
     # run they're absent and run_url stays null (the dashboard hides the link).
-    _run_id = os.environ.get("GITHUB_RUN_ID")
+    _run_id = os.environ.get("BENCHMARK_RUN_ID") or os.environ.get("GITHUB_RUN_ID")
     _repo = os.environ.get("GITHUB_REPOSITORY")
     _srv = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     summary["report"] = {
@@ -295,17 +335,18 @@ def main():
                 lines.append(f"### `/bench/{w}`")
                 lines.append("")
                 header = "| Server | " + " | ".join(
-                    f"c{c} rps | c{c} p50 | c{c} p90 | c{c} p95 | c{c} p99 | c{c} errors" for c in concs) + " |"
-                sep = "|" + "---|" * (1 + 6 * len(concs))
+                    f"c{c} requests | c{c} rps | c{c} p50 | c{c} p90 | c{c} p95 | c{c} p99 | c{c} errors" for c in concs) + " |"
+                sep = "|" + "---|" * (1 + 7 * len(concs))
                 lines += [header, sep]
                 for s in servers:
                     row = [f"`{s}`"]
                     for c in concs:
                         d = cell(s, w, wk, c)
                         if not d:
-                            row += ["–", "–", "–", "–", "–", "–"]
+                            row += ["–", "–", "–", "–", "–", "–", "–"]
                         else:
                             row += [
+                                str(d["requests_median"]) if d.get("requests_median") is not None else "–",
                                 f"{d['rps_median']:.0f}",
                                 f"{d['p50_median']:.1f}" if d.get("p50_median") is not None else "–",
                                 f"{d['p90_median']:.1f}" if d.get("p90_median") is not None else "–",

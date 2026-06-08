@@ -25,6 +25,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download benchmark artifact
         uses: actions/download-artifact@v5
         with:
@@ -34,15 +37,24 @@ jobs:
           github-token: ${{ github.token }}
           path: benchmark-artifact
 
+      - name: Rebuild dashboard from benchmark results
+        env:
+          BENCHMARK_RUN_ID: ${{ inputs.benchmark_run_id }}
+        run: |
+          rm -rf results docs
+          mkdir -p results
+          cp benchmark-artifact/results/*.json results/
+          python3 bench/aggregate.py
+
       - name: Verify dashboard files
         run: |
-          test -f benchmark-artifact/docs/index.html
-          test -f benchmark-artifact/docs/summary.json
+          test -f docs/index.html
+          test -f docs/summary.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: benchmark-artifact/docs
+          path: docs
 
       - name: Deploy to GitHub Pages
         id: deployment
