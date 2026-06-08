@@ -28,12 +28,12 @@ os.makedirs(RESULTS, exist_ok=True)
 SERVERS = ["swoole", "openswoole", "roadrunner", "frankenphp", "fpm"]
 WORKLOADS = ["hello", "hash", "mandelbrot", "json", "db"]
 CONC = [8, 16, 32, 64, 128]
-WORKERS = [4, 8]
+WORKERS = [2, 4, 8]
 RUNS = 2
 
 MANIFEST = {
     "php": "8.4.21", "laravel": "v13.13.0", "octane": "v2.17.4",
-    "worker_counts": "4 8", "caps": "cpus=2,cpuset=2-3,mem=4g",
+    "worker_counts": "2 4 8", "caps": "cpus=2,cpuset=2-3,mem=4g",
     "commit": "983f68f", "host": "Linux 6.8.0-1015-azure x86_64 (ubuntu-24.04 runner)",
     "nproc": 4, "wrk_cmd": "wrk -t1 -d30s --timeout 15s --latency",
     "wrk_cpuset": "0", "mysql_cpuset": "1", "generator_isolated": True,
@@ -70,6 +70,38 @@ def rss_mib(server, workload, workers):
     return int(base + per_worker * workers + wl_extra + random.uniform(-4, 4))
 
 
+def histogram_counts(p, requests):
+    bounds = [10, 25, 50, 100, 250, 500, 1000, 1250, 1500, 2000]
+    quantiles = [
+        (0.00, max(0.0, p["min"])),
+        (0.50, p["p50"]),
+        (0.90, p["p90"]),
+        (0.95, p["p95"]),
+        (0.99, p["p99"]),
+        (1.00, max(p["max"], p["p99"])),
+    ]
+
+    def cumulative(bound):
+        if bound <= quantiles[0][1]:
+            return 0.0
+        for (q0, v0), (q1, v1) in zip(quantiles, quantiles[1:]):
+            if bound <= v1:
+                if v1 <= v0:
+                    return q1
+                return q0 + (q1 - q0) * ((bound - v0) / (v1 - v0))
+        return 1.0
+
+    cumulative_counts = [int(round(requests * cumulative(bound))) for bound in bounds]
+    counts = []
+    previous = 0
+    for value in cumulative_counts:
+        value = max(previous, min(requests, value))
+        counts.append(value - previous)
+        previous = value
+    counts.append(max(0, requests - previous))
+    return bounds, counts
+
+
 def cell(server, workload, workers, conc, run):
     cap = CAP[workload][server] * worker_factor(workload, workers)
     base_s = BASE_LAT[workload] / 1000.0
@@ -100,6 +132,7 @@ def cell(server, workload, workers, conc, run):
     if server == "fpm" and workload in CPU_WORKLOADS and conc == 128 and workers == 8:
         errors["timeout"] = random.randint(3, 12)
         errors["status"] = random.randint(0, 4)
+    bounds, counts = histogram_counts(p, requests)
 
     return {
         "server": server, "workload": workload, "route": f"/bench/{workload}",
@@ -107,6 +140,12 @@ def cell(server, workload, workers, conc, run):
         "wrk": {
             "requests": requests, "duration_s": DURATION, "bytes": requests * BODY[workload],
             "rps": round(rps, 2), "errors": errors,
+            "latency_histogram": {
+                "corrected": True,
+                "demo_estimated": True,
+                "bounds_ms": bounds,
+                "counts": counts,
+            },
             "latency_ms": {k: p[k] for k in
                            ["min", "max", "mean", "stdev", "p50", "p75", "p90", "p95", "p99", "p99_9"]},
         },

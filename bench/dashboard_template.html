@@ -437,6 +437,13 @@
   .wl-table .v-err { display: block; font-size: 11px; color: var(--text-3); font-weight: 500; }
   .wl-table .v-err.bad { color: #c2410c; font-weight: 700; }
   .wl-table .v-miss { color: var(--text-3); font-weight: 500; }
+  .wl-table th.selected-concurrency,
+  .wl-table td.selected-concurrency {
+    background: var(--accent-soft);
+  }
+  .wl-table th.selected-concurrency {
+    color: var(--accent);
+  }
 
   /* Legend */
   .legend {
@@ -498,6 +505,21 @@
     .report-dl,
     .report-desc { width: 100%; }
     .chart-pair { gap: 16px; }
+    .chart-box.dist .ct {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .chart-box.dist .ct > span:first-child,
+    .chart-box.dist .dist-tabs {
+      width: 100%;
+    }
+    .chart-box.dist .dist-tabs {
+      margin-left: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
     .view-options { flex-wrap: nowrap; justify-content: center; gap: 10px; width: 100%; margin-left: 0; }
   }
 </style>
@@ -661,6 +683,7 @@ const LATENCY_METRICS = [
 ];
 const DEFAULT_LATENCY_METRIC = LATENCY_METRICS[3];
 let SELECTED_METRIC = DEFAULT_LATENCY_METRIC;
+const METRIC_BUCKET_FILL = 'rgba(254, 240, 138, .32)';
 const SRV_LABEL = {
   swoole: "Swoole", openswoole: "OpenSwoole", roadrunner: "RoadRunner",
   frankenphp: "FrankenPHP", fpm: "PHP-FPM"
@@ -899,6 +922,16 @@ function applyVisibility() {
     ch.data.datasets.forEach(ds => {
       if (ds._server) ds.hidden = hidden.has(ds._server);
     });
+    if (ch.config._requestHistogramChart) {
+      const workload = ch.config._requestHistogramChart.workload;
+      const concurrency = Number(ch.config._selectedConcurrency);
+      const distributions = DATA.servers.map(server => ({
+        server,
+        distribution: requestDistributionData(server, workload, concurrency),
+      }));
+      const labels = distributions.find(x => x.distribution.labels.length)?.distribution.labels || [];
+      ch.config._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
+    }
     ch.update();
   });
 }
@@ -966,6 +999,7 @@ function requestDistributionData(server, workload, concurrency) {
     const demoEstimated = Boolean(cc.latency_histogram.demo_estimated);
     return {
       labels: fixedHistogramLabels(cc.latency_histogram.bounds_ms),
+      bounds: cc.latency_histogram.bounds_ms,
       requests: cc.latency_histogram.counts_median,
       total: Number(cc.latency_histogram.samples_median || cc.requests_median || 0),
       source: demoEstimated ? 'demo' : corrected ? 'corrected' : 'measured',
@@ -979,6 +1013,7 @@ function requestDistributionData(server, workload, concurrency) {
   const p95p99 = Math.round(total * .04);
   return {
     labels: ['<= p50', 'p50-p90', 'p90-p95', 'p95-p99', '> p99'],
+    bounds: [],
     requests: [p50, p50p90, p90p95, p95p99, Math.max(0, total - p50 - p50p90 - p90p95 - p95p99)],
     total,
     source: 'estimated',
@@ -990,6 +1025,55 @@ function requestDistributionData(server, workload, concurrency) {
     },
   };
 }
+
+function selectedMetricBucketIndex(server, workload, concurrency, distribution) {
+  const cc = cell(server, workload, concurrency);
+  if (!cc) return -1;
+  const metricValue = cc[SELECTED_METRIC.key];
+  if (metricValue == null) return -1;
+  if (distribution.source === 'estimated') {
+    return { p50_median: 0, p90_median: 1, p95_median: 2, p99_median: 3 }[SELECTED_METRIC.key] ?? -1;
+  }
+  const bounds = distribution.bounds || [];
+  if (!bounds.length) return -1;
+  const index = bounds.findIndex(upper => metricValue <= upper);
+  return index === -1 ? bounds.length : index;
+}
+
+function selectedMetricBucketIndexes(distributions, workload, concurrency, labels) {
+  const indexes = new Set();
+  distributions.forEach(({ server, distribution }) => {
+    if (hidden.has(server)) return;
+    if (!distribution || distribution.labels.join('|') !== labels.join('|')) return;
+    const index = selectedMetricBucketIndex(server, workload, concurrency, distribution);
+    if (index >= 0) indexes.add(index);
+  });
+  return [...indexes];
+}
+
+const metricBucketBackgroundPlugin = {
+  id: 'metricBucketBackground',
+  beforeDatasetsDraw(chart) {
+    const indexes = chart.config._metricBucketIndexes || [];
+    const x = chart.scales.x;
+    const area = chart.chartArea;
+    if (!indexes.length || !x || !area) return;
+    const tickCount = chart.data.labels.length;
+    if (!tickCount) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.fillStyle = METRIC_BUCKET_FILL;
+    indexes.forEach(index => {
+      if (index < 0 || index >= tickCount) return;
+      const center = x.getPixelForTick(index);
+      const left = index === 0 ? area.left : (x.getPixelForTick(index - 1) + center) / 2;
+      const right = index === tickCount - 1 ? area.right : (center + x.getPixelForTick(index + 1)) / 2;
+      ctx.fillRect(left, area.top, right - left, area.bottom - area.top);
+    });
+    ctx.restore();
+  }
+};
+Chart.register(metricBucketBackgroundPlugin);
 
 function distributionSourceLabel(source) {
   return {
@@ -1049,6 +1133,8 @@ function buildRequestHistogramChart(canvasId, workload, concurrency) {
     distribution: requestDistributionData(server, workload, concurrency),
   }));
   const labels = distributions.find(x => x.distribution.labels.length)?.distribution.labels || [];
+  const tcol = cssVar('--text-3');
+  const grid = cssVar('--grid');
   const datasets = distributions.map(({ server, distribution }) => ({
     label: srvLabel(server),
     _server: server,
@@ -1059,9 +1145,7 @@ function buildRequestHistogramChart(canvasId, workload, concurrency) {
     borderRadius: 3,
     hidden: hidden.has(server),
   }));
-  const tcol = cssVar('--text-3');
-  const grid = cssVar('--grid');
-  const ch = new Chart(document.getElementById(canvasId), {
+  const chartConfig = {
     type: 'bar',
     data: { labels, datasets },
     options: {
@@ -1104,8 +1188,11 @@ function buildRequestHistogramChart(canvasId, workload, concurrency) {
         }
       }
     }
-  });
+  };
+  chartConfig._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
+  const ch = new Chart(document.getElementById(canvasId), chartConfig);
   ch.config._serverChart = true;
+  ch.config._requestHistogramChart = { workload };
   ch.config._selectedConcurrency = concurrency;
   charts.push(ch);
   return ch;
@@ -1118,6 +1205,7 @@ function updateRequestHistogramChart(chart, workload, concurrency) {
   }));
   const labels = distributions.find(x => x.distribution.labels.length)?.distribution.labels || [];
   chart.config._selectedConcurrency = concurrency;
+  chart.config._metricBucketIndexes = selectedMetricBucketIndexes(distributions, workload, concurrency, labels);
   chart.data.labels = labels;
   chart.data.datasets.forEach(dataset => {
     const distribution = distributions.find(x => x.server === dataset._server)?.distribution;
@@ -1186,6 +1274,7 @@ function makeWorkloadCharts(w, container) {
   build('rps_median', false, 'req/s', idRps);
   const initialConcurrency = DATA.concurrencies[0];
   const histogramChart = buildRequestHistogramChart(idDist, w, initialConcurrency);
+  highlightWorkloadTableConcurrency(container, initialConcurrency);
   updateWrkCommand(container, w, initialConcurrency);
   bindCpuPopover(container);
   const tabs = container.querySelector(`.dist-tabs[data-chart="${idDist}"]`);
@@ -1199,6 +1288,7 @@ function makeWorkloadCharts(w, container) {
         b.classList.toggle('active', Number(b.dataset.concurrency) === concurrency)
       );
       updateRequestHistogramChart(histogramChart, w, concurrency);
+      highlightWorkloadTableConcurrency(container, concurrency);
       updateWrkCommand(container, w, concurrency);
     });
   });
@@ -1210,7 +1300,7 @@ const fmtRps = (v) => v == null ? null : `${Math.round(v).toLocaleString()} rps`
 const fmtReq = (v) => v == null ? null : `${Math.round(v).toLocaleString()} req`;
 function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
   let head = '<thead><tr><th class="rowhdr">Server</th>';
-  DATA.concurrencies.forEach(c => head += `<th>c${c}</th>`);
+  DATA.concurrencies.forEach(c => head += `<th data-concurrency="${c}">c${c}</th>`);
   head += '</tr></thead>';
   let body = '<tbody>';
   DATA.servers.forEach(s => {
@@ -1219,19 +1309,25 @@ function workloadTableHtml(w, highlightServer, metric = SELECTED_METRIC) {
     DATA.concurrencies.forEach(c => {
       const cc = cell(s, w, c);
       if (!cc || (cc.p50_median == null && cc.p90_median == null && cc.p95_median == null && cc.p99_median == null && cc.rps_median == null)) {
-        body += `<td><span class="v-miss">&ndash;</span></td>`;
+        body += `<td data-concurrency="${c}"><span class="v-miss">&ndash;</span></td>`;
         return;
       }
       const lat = fmtMs(cc[metric.key]);
       const rps = fmtRps(cc.rps_median);
       const req = fmtReq(cc.requests_median);
       const errors = Number(cc.errors || 0);
-      body += `<td><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-req">${req != null ? req : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
+      body += `<td data-concurrency="${c}"><span class="v-p99">${lat != null ? lat : '&ndash;'}</span><span class="v-rps">${rps != null ? rps : ''}</span><span class="v-req">${req != null ? req : ''}</span><span class="v-err${errors ? ' bad' : ''}">err ${errors.toLocaleString()}</span></td>`;
     });
     body += '</tr>';
   });
   body += '</tbody>';
   return `<table class="wl-table">${head + body}</table>`;
+}
+
+function highlightWorkloadTableConcurrency(container, concurrency) {
+  container.querySelectorAll('.wl-table th[data-concurrency], .wl-table td[data-concurrency]').forEach(cell => {
+    cell.classList.toggle('selected-concurrency', Number(cell.dataset.concurrency) === Number(concurrency));
+  });
 }
 
 /* ===== GROUP SECTIONS ===== */
