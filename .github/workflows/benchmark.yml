@@ -246,7 +246,7 @@ jobs:
   # and the github-pages environment. Only runs when publish=true.
   deploy:
     needs: benchmark
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    if: ${{ always() && needs.benchmark.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
