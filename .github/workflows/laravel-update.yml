@@ -2,7 +2,7 @@ name: Laravel Update
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
     paths:
       - composer.lock
   push:
@@ -89,30 +89,42 @@ jobs:
           print(f"safe_dependabot_pr={safe}")
           PY
 
-  auto-merge-dependabot:
+  # Merge and dispatch in one job. A merge performed with GITHUB_TOKEN does not
+  # emit events that start new workflow runs, so nothing downstream of the merge
+  # can be relied on to trigger the benchmark -- it has to be dispatched here.
+  # --auto is deliberately not used: master has no required checks, so there is
+  # nothing to wait for and enabling auto-merge on an already-mergeable PR fails.
+  merge-and-dispatch:
     runs-on: ubuntu-latest
     needs: detect
     if: >-
-      ${{ github.event.action != 'closed'
-          && needs.detect.outputs.safe_dependabot_pr == 'true'
+      ${{ needs.detect.outputs.safe_dependabot_pr == 'true'
           && needs.detect.outputs.laravel_changed == 'true' }}
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
-      - name: Enable auto-merge
+      - name: Merge dependabot PR
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge "$PR_URL" --auto --squash --delete-branch
+        run: gh pr merge "$PR_URL" --squash --delete-branch
 
+      - name: Dispatch benchmark batch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.event.pull_request.base.ref }}
+        run: gh workflow run benchmark-all.yml --repo "$REPOSITORY" --ref "$REF_NAME"
+
+  # Manual composer.lock pushes straight to master still get a benchmark run.
   dispatch-benchmark-batch:
     runs-on: ubuntu-latest
     needs: detect
     if: >-
-      ${{ needs.detect.outputs.laravel_changed == 'true'
-          && (github.event_name == 'push'
-              || (github.event.action == 'closed' && github.event.pull_request.merged == true)) }}
+      ${{ github.event_name == 'push'
+          && needs.detect.outputs.laravel_changed == 'true' }}
     permissions:
       actions: write
       contents: read
@@ -121,5 +133,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          REF_NAME: ${{ github.event_name == 'push' && github.ref_name || github.event.pull_request.base.ref }}
+          REF_NAME: ${{ github.ref_name }}
         run: gh workflow run benchmark-all.yml --repo "$REPOSITORY" --ref "$REF_NAME"
